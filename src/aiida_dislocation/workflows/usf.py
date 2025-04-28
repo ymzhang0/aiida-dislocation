@@ -162,29 +162,24 @@ class USFWorkChain(BaseRestartWorkChain):
         )
 
     def validate_slipping_system(self):
-        structure_type, gliding_plane, slipping_direction = self.inputs.slipping_system
-
-        if (structure_type, gliding_plane, slipping_direction) not in self._IMPLEMENTED_SLIPPING_SYSTEMS:
-            raise NotImplementedError(f'Slipping system {self.inputs.slipping_system} not implemented')
-
-        structure_type, gliding_plane, slipping_direction = self.inputs.slipping_system
+        structure_type, gliding_plane = self.inputs.slipping_system
 
         if structure_type in self._IMPLEMENTED_SLIPPING_SYSTEMS:
             self.report(f'{self._IMPLEMENTED_SLIPPING_SYSTEMS[structure_type]["info"]}')
             possible_gliding_planes = self._IMPLEMENTED_SLIPPING_SYSTEMS[structure_type]['possible_gliding_planes']
             if gliding_plane in possible_gliding_planes:
-                self.report(f'{possible_gliding_planes[gliding_plane]["stacking"]} stacking for {gliding_plane} gliding plane.')
-                if slipping_direction in possible_gliding_planes[gliding_plane]['slipping_directions']:
-                    self.report(f'Slipping direction {slipping_direction} is implemented for {structure_type} and {gliding_plane}')
+                self.report(f'Now we are working on {gliding_plane} gliding plane.')
+                if possible_gliding_planes[gliding_plane]['faulting_possible']:
+                    self.report(f'Faulting is possible for {gliding_plane} gliding plane.'
+                                f'The stacking order is {possible_gliding_planes[gliding_plane]["stacking"]}. '
+                                f'Slipping direction: {possible_gliding_planes[gliding_plane]["slipping_direction"]}. ')
                 else:
-                    raise ValueError(f'Slipping direction {slipping_direction} not implemented for {structure_type} and {gliding_plane}')
+                    raise ValueError(f'Faulting is not possible for {gliding_plane} gliding plane.')
             else:
-                raise ValueError(f'Gliding plane {gliding_plane} not implemented for {structure_type}')
+                raise ValueError(f'Gliding plane {gliding_plane} not implemented yet. ')
         else:   
-            raise NotImplementedError(f'Slipping system {self.inputs.slipping_system} not implemented')
-        if gliding_plane not in self._IMPLEMENTED_SLIPPING_SYSTEMS[structure_type]['possible_gliding_planes']:
-            raise ValueError(f'Gliding plane {gliding_plane} not implemented for {structure_type}')
-            
+            raise NotImplementedError(f'Slipping system {self.inputs.slipping_system} not implemented yet.')
+
             
     def setup(self):
         pass
@@ -275,7 +270,7 @@ class USFWorkChain(BaseRestartWorkChain):
 
             energy_difference = total_energy_faulted_geometry - total_energy_unit_cell * self.ctx.multiplicity
 
-            USF = (energy_difference / self.ctx.surface_area) * self._RYA22Jm2
+            USF = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2
 
             self.report(f'Energy difference per surface area: {USF} J/m^2')
         else:

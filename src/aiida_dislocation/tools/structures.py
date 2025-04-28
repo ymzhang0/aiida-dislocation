@@ -19,7 +19,7 @@ def get_unstable_faulted_structure_and_kpoints(
     Get a supercell of the structure
     """
 
-    structure_type, gliding_plane, slipping_direction = slipping_system
+    structure_type, gliding_plane = slipping_system
     
     structure_sc = orm.StructureData()
     kpoints_sc = orm.KpointsData()
@@ -49,7 +49,7 @@ def get_unstable_faulted_structure_and_kpoints(
             # A / sqrt(2) is half of the lattice constant for conventional cell
             
             A = A 
-            C = A / sqrt(2) * n_layers / 2
+            C = C * sqrt(2) * n_layers / 2
 
             supercell = numpy.array([
                 [A,   0.0, 0.0],
@@ -84,7 +84,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
         elif gliding_plane == '110':
             A = A
-            C = A * n_layers / 2
+            C = C * n_layers / 2
 
             supercell = numpy.array([
                 [A,   0.0, 0.0],
@@ -178,7 +178,7 @@ def get_unstable_faulted_structure_and_kpoints(
             if n_layers % 2 != 0:
                 raise ValueError('n_layers must be a multiple of 2 for 100 gliding plane')
             A = A * 2 / sqrt(3)
-            C = C * n_layers / 2
+            C = A * n_layers / 2
 
             supercell = numpy.array([
                 [A,   0.0, 0.0],
@@ -216,12 +216,12 @@ def get_unstable_faulted_structure_and_kpoints(
             if n_layers % 2 != 0:
                 raise ValueError('n_layers must be a multiple of 2 for 110 gliding plane')
             A = A * 2 / sqrt(3)
-            C = C * n_layers / 2
+            C = A * sqrt(2) * n_layers / 2
 
             supercell = numpy.array([
-                [ A / 2, A * sqrt(2) / 2, 0.0],
-                [-A / 2, A * sqrt(2) / 2, 0.0],
-                [0.0,    0.0,             C  ],
+                [ A / 2, A / sqrt(2), 0.0],
+                [-A / 2, A / sqrt(2), 0.0],
+                [0.0,    0.0,         C  ],
             ])
 
             structure_sc.set_cell(supercell)
@@ -246,7 +246,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A * sqrt(2) / 2
+            surface_area = A * A / sqrt(2)
 
         elif gliding_plane == '111':
             if n_layers % 3 != 0:
@@ -290,32 +290,43 @@ def get_unstable_faulted_structure_and_kpoints(
             surface_area = A * A * sqrt(3) / 4
             
             
-            
-            
-            
     elif structure_type == 'A15':
         pass
     elif structure_type == 'B1':
-        if gliding_plane == '110':
+        
+        ## A is the length from [0 0 0] to [1/2, 1/2, 0]
+        ## Lattice constant for conventional cell is A * sqrt(2)
+        
+        A, B, C = structure_uc.cell_lengths
+        alpha, beta, gamma = structure_uc.cell_angles
 
-            A = structure_uc.cell_lengths[0]
-            C = A * n_layers / 2
+        if (
+            (max(A, B, C) - min(A, B, C)) > 1e-5 
+            or 
+            any(abs(angle - 60.0) > 1e-5 for angle in (alpha, beta, gamma))
+            ):
+            logger.info('Cell length or angles differ more than 1e-5.')
+
+        elements_wyckoff_symbols = get_elements_for_wyckoff_symbols(structure_uc)
+        
+        ATOM_1, ATOM_2 = (elements_wyckoff_symbols[k] for k in ['a', 'b'])
+
+        if gliding_plane == '100':
+            
+            A = A 
+            C = A * sqrt(2) * n_layers / 2
 
             supercell = numpy.array([
-                [A  , 0.0      , 0.0],
-                [0.0, sqrt(2)*A, 0.0],
-                [0.0, 0.0      , C  ],
+                [A  , 0.0, 0.0],
+                [0.0, A,   0.0],
+                [0.0, 0.0, C  ],
             ])
-            
+
             structure_sc.set_cell(supercell)
 
-            ATOM_1, ATOM_2 = structure_uc.get_kind_names()
-
             planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 0.5]], 
-                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.5, 0.0]],
-                'C': [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.5, 0.5]],
-                'D': [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.0, 0.0]],
+                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.5, 0.5]], 
+                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.0, 0.0]],
             }
 
             falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
@@ -330,6 +341,45 @@ def get_unstable_faulted_structure_and_kpoints(
                 n_layers, 
                 2
             )
+
+            multiplicity = n_layers
+
+            surface_area = A * A
+            
+        elif gliding_plane == '110':
+
+            A = A
+            C = A * n_layers / 2
+
+            supercell = numpy.array([
+                [A  , 0.0      , 0.0],
+                [0.0, sqrt(2)*A, 0.0],
+                [0.0, 0.0      , C  ],
+            ])
+            
+            structure_sc.set_cell(supercell)
+
+            planer_config = {
+                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 0.5]], 
+                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.5, 0.0]],
+            }
+
+            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+
+            for idx, st in enumerate(falted_stacking):
+                for value in planer_config[st]:
+                    position_frac = numpy.array([*value[1:], idx/n_layers])
+                    position_cart = position_frac @ supercell
+                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
+            kpoints_sc = get_kpoints_mesh_for_supercell(
+                kpoints_uc, 
+                n_layers, 
+                2
+            )
+
+            multiplicity = n_layers
+
+            surface_area = A * A * sqrt(2)
 
         if gliding_plane == '111':
 
@@ -404,7 +454,7 @@ def get_unstable_faulted_structure_and_kpoints(
                 2
             )
 
-            multiplicity = 2 * n_layers / 2
+            multiplicity = n_layers
 
             surface_area = sqrt(2) * A * A      
     elif structure_type == 'E21':

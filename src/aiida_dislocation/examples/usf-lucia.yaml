@@ -2,13 +2,17 @@ pw:
     metadata:
         options:
             resources:
-                num_machines: 4
-                num_mpiprocs_per_machine: 112
-                num_cores_per_machine: 112
+                num_machines: 1
+                num_mpiprocs_per_machine: 128
+                num_cores_per_machine: 128
             max_wallclock_seconds: 7200
-            account: ehpc14
-            queue_name: gp_ehpc
-            qos: gp_ehpc
+            account: elph
+            queue_name: debug
+            prepend_text: |
+                ml EasyBuild/2023a
+                ml Cray/22.09
+                module load PrgEnv-intel
+
             append_text: rm out/*wfc*
 
     parameters:
