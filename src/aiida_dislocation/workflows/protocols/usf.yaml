@@ -1,0 +1,35 @@
+metadata:
+    options:
+        resources:
+            num_machines: 1
+            "num_mpiprocs_per_machine": 56,
+            "num_cores_per_machine": 56
+        max_wallclock_seconds: 7200
+        account: ehpc14
+        queue_name: gp_debug
+        qos: gp_debug
+        append_text: rm out/*wfc*
+
+pseudo_family: 'PseudoDojo/0.5/PBE/SR/standard/upf'
+
+parameters:
+    CONTROL:
+        calculation: scf
+    SYSTEM:
+        ecutwfc: 20
+        ecutrho: 80
+        smearing: cold
+        degauss: 0.02
+        nosym: False
+        noinv: False
+        occupations: smearing
+    ELECTRONS:
+        electron_maxstep: 200
+        conv_thr: 1e-6
+
+skip_uc: False
+n_layers: 8
+slipping_system:
+    - E21
+    - 110
+    - None

@@ -1,0 +1,188 @@
+[build-system]
+requires = ['flit_core >=3.4,<4']
+build-backend = 'flit_core.buildapi'
+
+[project]
+name = 'aiida-dislocation'
+dynamic = ['version']
+description = 'The official AiiDA plugin for dislocation properties'
+authors = [{name = 'Yiming Zhang', email = 'zhangyiming1998@gmail.com'}]
+readme = 'README.md'
+license = {file = 'LICENSE'}
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Framework :: AiiDA',
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+]
+keywords = ['aiida', 'workflows']
+requires-python = '>=3.8'
+dependencies = [
+    'aiida_core[atomic_tools]~=2.6',
+    'aiida-quantumespresso~=4.7.0',
+    'aiida-pseudo~=1.1',
+    'click~=8.0',
+    'importlib_resources',
+    'jsonschema',
+    'numpy',
+    'pydantic~=2.0',
+    'packaging',
+    'qe-tools~=2.0',
+    'xmlschema~=2.0'
+]
+
+[project.urls]
+Home = 'https://github.com/ymzhang0/aiida-dislocation.git'
+Source = 'https://github.com/ymzhang0/aiida-dislocation.git'
+
+[project.optional-dependencies]
+docs = [
+    'sphinx~=6.2.1',
+    'sphinx-copybutton~=0.5.2',
+    'sphinx-book-theme~=1.0.1',
+    'sphinx-click~=4.4.0',
+    'sphinx-design~=0.4.1',
+    'sphinxcontrib-details-directive~=0.1.0',
+    'sphinx-autoapi~=3.0.0',
+    'myst_parser~=1.0.0',
+]
+pre-commit = [
+    'pre-commit~=2.17',
+    'pylint~=2.17.2',
+    'pylint-aiida~=0.1.1',
+    'toml',
+]
+tests = [
+    'pgtest~=1.3',
+    'pytest~=6.0',
+    'pytest-regressions~=2.3'
+]
+
+[project.scripts]
+
+[project.entry-points.'aiida.calculations']
+
+[project.entry-points.'aiida.data']
+
+[project.entry-points.'aiida.parsers']
+
+[project.entry-points.'aiida.tools.calculations']
+
+[project.entry-points.'aiida.tools.data.orbitals']
+
+[project.entry-points.'aiida.workflows']
+'dislocation.usf' = 'aiida_dislocation.workflows.usf:USFWorkChain'
+'dislocation.gsfe' = 'aiida_dislocation.workflows.gsfe:GSFEWorkChain'
+
+[tool.flit.module]
+name = 'aiida_dislocation'
+
+[tool.flit.sdist]
+exclude = [
+    'docs/',
+    'tests/',
+    'examples/',
+]
+
+[tool.flynt]
+line-length = 120
+fail-on-change = true
+
+[tool.isort]
+force_sort_within_sections = true
+include_trailing_comma = true
+line_length = 120
+multi_line_output = 3  # this configuration is compatible with yapf
+
+[tool.pydocstyle]
+ignore = [
+    'D104',
+    'D202',
+    'D203',
+    'D213'
+]
+
+[tool.pylint.master]
+load-plugins = ['pylint_aiida','pylint.extensions.no_self_use']
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.tool-check]
+generated-members = 'self.exit_codes.*'
+
+[tool.pylint.messages_control]
+disable = [
+    'duplicate-code',
+    'fixme',
+    'inconsistent-return-statements',
+    'import-outside-toplevel',
+    'locally-disabled',
+    'logging-format-interpolation',
+    'no-else-raise',
+    'too-many-arguments',
+    'too-many-ancestors',
+    'too-many-branches',
+    'too-many-locals',
+    'use-dict-literal',
+]
+
+[tool.pylint.basic]
+good-names = [
+    'i',
+    'j',
+    'k',
+    'SsspFamily',
+    'StructureData',
+    'SinglefileData',
+    'UpfData',
+    'HpCalculation',
+    'PwCalculation',
+]
+
+[tool.pytest.ini_options]
+minversion = '6.0'
+testpaths = [
+    'tests',
+]
+filterwarnings = [
+    'ignore:Object of type .* not in session, .* operation along .* will not proceed:sqlalchemy.exc.SAWarning',
+    'ignore:Creating AiiDA configuration folder.*:UserWarning',
+    'ignore::DeprecationWarning:frozendict:',
+    'ignore::DeprecationWarning:pkg_resources:',
+    'ignore::DeprecationWarning:sqlalchemy_utils:',
+]
+
+[tool.yapf]
+align_closing_bracket_with_visual_indent = true
+based_on_style = 'google'
+coalesce_brackets = true
+column_limit = 120
+dedent_closing_brackets = true
+indent_dictionary_value = false
+split_arguments_when_comma_terminated = true
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+envlist =
+    py{38,39,310,311}
+    py38-pre-commit
+
+[testenv]
+description = Run the pytest tests
+usedevelop=True
+extras = tests
+commands = pytest {posargs}
+
+[testenv:py38-pre-commit]
+description = Run the pre-commit checks
+extras =
+    tests
+    pre-commit
+commands = pre-commit run {posargs}
+"""

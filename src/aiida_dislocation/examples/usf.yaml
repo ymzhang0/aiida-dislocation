@@ -1,0 +1,31 @@
+pw:
+    metadata:
+        options:
+            resources:
+                num_machines: 2
+                num_mpiprocs_per_machine: 112
+                num_cores_per_machine: 112
+            max_wallclock_seconds: 7200
+            account: ehpc14
+            queue_name: gp_debug
+            qos: gp_debug
+            append_text: rm out/*wfc*
+
+    parameters:
+        CONTROL:
+            calculation: scf
+        SYSTEM:
+            ecutwfc: 100
+            ecutrho: 400
+            smearing: cold
+            degauss: 0.01
+            nosym: False
+            noinv: False
+            occupations: smearing
+        ELECTRONS:
+            electron_maxstep: 200
+            conv_thr: 1e-6
+
+skip_uc: False
+n_layers: 8
+
