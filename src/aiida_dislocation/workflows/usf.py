@@ -68,6 +68,10 @@ class USFWorkChain(BaseRestartWorkChain):
                         'slipping_direction': '1/2[010]',
                         'faulting_possible': True,
                         },
+                '110': {'stacking': 'AB', 
+                        'slipping_direction': '1/2[112]',
+                        'faulting_possible': True,
+                        },
             }
         },
         'B2': {

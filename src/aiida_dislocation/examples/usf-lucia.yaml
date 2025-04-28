@@ -2,7 +2,7 @@ pw:
     metadata:
         options:
             resources:
-                num_machines: 1
+                num_machines: 2
                 num_mpiprocs_per_machine: 128
                 num_cores_per_machine: 128
             max_wallclock_seconds: 7200
@@ -10,10 +10,8 @@ pw:
             queue_name: debug
             prepend_text: |
                 ml EasyBuild/2023a
-                ml Cray/22.09
+                ml Cray/24.07  
                 module load PrgEnv-intel
-
-            append_text: rm out/*wfc*
 
     parameters:
         CONTROL:
