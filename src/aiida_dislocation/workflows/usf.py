@@ -60,6 +60,24 @@ class USFWorkChain(BaseRestartWorkChain):
                         },
             }
         },
+        'A15': {
+            'info': 'A3B crystal <space group #223, prototype Nb3Sn>. '
+                    'I don\'t know the usual gliding plane. ',
+            'possible_gliding_planes': {
+                '100': {'stacking': 'AB', 
+                        'slipping_direction': '1/2[110]',
+                        'faulting_possible': True,
+                        },
+                '110': {'stacking': 'AB', 
+                        'slipping_direction': '1/2[001]',
+                        'faulting_possible': True,
+                        },
+                '111': {'stacking': 'ABC', 
+                        'slipping_direction': '1/2[011]',
+                        'faulting_possible': True,
+                        },
+            }
+        },
         'B1': {
             'info': 'FCC element crystal <space group #225, prototype NaCl>. '
                     'I don\'t know the usual gliding plane. ',

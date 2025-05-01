@@ -495,20 +495,40 @@ def get_unstable_faulted_structure_and_kpoints(
 
             supercell = numpy.array([
                 [A  , 0.0, 0.0],
-                [0.0, A,   0.0],
+                [0.0, A * sqrt(2),   0.0],
                 [0.0, 0.0, C  ],
             ])
 
             structure_sc.set_cell(supercell)
 
             planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.5, 0.5],], 
-                'B': [[ATOM_3, 0.5, 0.0], ], 
-                'C': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.0, 0.0]], 
-                'D': [[ATOM_3, 0.0, 0.5]], 
+                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 0.5],], 
+                'B': [[ATOM_3, 0.5, 1/4], ], 
+                'C': [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.0, 0.0]], 
+                'D': [[ATOM_3, 0.5, 3/4]], 
             }
 
             falted_stacking = 'ABCD' * int(n_layers/8) + 'CDAB' * int(n_layers/8)
+
+            for idx, st in enumerate(falted_stacking):
+                for value in planer_config[st]:
+                    position_frac = numpy.array([*value[1:], idx/n_layers])
+                    position_cart = position_frac @ supercell
+                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
+                    
+            kpoints_sc = get_kpoints_mesh_for_supercell(
+                kpoints_uc, 
+                n_layers, 
+                4
+            )
+            
+            multiplicity = n_layers / 2
+
+            surface_area = A * A * sqrt(2)
+            
+            
+            
+            
             
     elif structure_type == 'E21':
         A, B, C = structure_uc.cell_lengths
