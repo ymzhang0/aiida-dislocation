@@ -19,7 +19,7 @@ def get_unstable_faulted_structure_and_kpoints(
     Get a supercell of the structure
     """
 
-    structure_type, gliding_plane = slipping_system
+    structure_type, gliding_plane, slipping_direction = slipping_system
     
     structure_sc = orm.StructureData()
     kpoints_sc = orm.KpointsData()
@@ -65,7 +65,20 @@ def get_unstable_faulted_structure_and_kpoints(
                 'B': [[ATOM, 0.5, 0.5],],
             }
 
-            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+            if slipping_direction:
+                planer_config['C'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['A']
+                ]
+                planer_config['D'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['B']
+                ]
+            else:
+                planer_config['C'] = [[ATOM, 0.0, 0.5],]
+                planer_config['D'] = [[ATOM, 0.5, 0.0],]
+
+            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
             for idx, st in enumerate(falted_stacking):
                 for value in planer_config[st]:
@@ -80,7 +93,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
 
         elif gliding_plane == '110':
             A = A
@@ -90,7 +103,7 @@ def get_unstable_faulted_structure_and_kpoints(
                 [A,   0.0, 0.0],
                 [0.0, A*sqrt(2),   0.0],
                 [0.0, 0.0, C  ],
-            ])
+            ], dtype=numpy.float64)
 
             structure_sc.set_cell(supercell)
 
@@ -99,7 +112,20 @@ def get_unstable_faulted_structure_and_kpoints(
                 'B': [[ATOM, 0.5, 0.5],],
             }
 
-            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+            if slipping_direction:
+                planer_config['C'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['A']
+                ]
+                planer_config['D'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['B']
+                ]
+            else:
+                planer_config['C'] = [[ATOM, 0.0, 0.5],]
+                planer_config['D'] = [[ATOM, 0.5, 0.0],]
+
+            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
             for idx, st in enumerate(falted_stacking):
                 for value in planer_config[st]:
@@ -115,7 +141,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A * sqrt(2)
+            surface_area = numpy.linalg.norm(numpy.cross(supercell[0], supercell[1]))
 
         elif gliding_plane == '111':
 
@@ -155,7 +181,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers - 1
 
-            surface_area = A * A * sqrt(3) / 4
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
             
     elif structure_type == 'A2':
         
@@ -212,7 +238,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
 
         if gliding_plane == '110':
             if n_layers % 2 != 0:
@@ -231,9 +257,20 @@ def get_unstable_faulted_structure_and_kpoints(
             planer_config = {
                 'A': [[ATOM, 0.0, 0.0],],
                 'B': [[ATOM, 1/2, 1/2],],
-                'C': [[ATOM, 0.0, 1/2],],
-                'D': [[ATOM, 1/2, 0.0],],
             }
+
+            if slipping_direction:
+                planer_config['C'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['A']
+                ]
+                planer_config['D'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['B']
+                ]
+            else:
+                planer_config['C'] = [[ATOM, 0.0, 1/2],]
+                planer_config['D'] = [[ATOM, 1/2, 0.0],]
 
             falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
@@ -250,7 +287,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A / sqrt(2)
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
 
         elif gliding_plane == '111':
             if n_layers % 3 != 0:
@@ -291,7 +328,7 @@ def get_unstable_faulted_structure_and_kpoints(
             
             multiplicity = n_layers - 1
 
-            surface_area = A * A * sqrt(3) / 4
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
            
     elif structure_type == 'A15':
         pass
@@ -332,7 +369,20 @@ def get_unstable_faulted_structure_and_kpoints(
                 'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.0, 0.0]],
             }
 
-            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+            if slipping_direction:
+                planer_config['C'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['A']
+                ]
+                planer_config['D'] = [
+                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]] 
+                    for ATOM, x, y in planer_config['B']
+                ]
+            else:
+                planer_config['C'] = [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.0, 0.5]]
+                planer_config['D'] = [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.5, 0.0]]
+
+            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
             for idx, st in enumerate(falted_stacking):
                 for value in planer_config[st]:
@@ -347,7 +397,7 @@ def get_unstable_faulted_structure_and_kpoints(
 
             multiplicity = n_layers
 
-            surface_area = A * A
+            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
             
         elif gliding_plane == '110':
 
@@ -586,14 +636,6 @@ def get_unstable_faulted_structure_and_kpoints(
 
     return (structure_sc, kpoints_sc, multiplicity, surface_area)
     
-
-
-def get_slipped_series(supercell, n_layers, slipping_system):
-    """
-    Get a series of slipped supercells of the structure
-    """
-    pass
-
 
 
 def is_primitive_cell(structure: orm.StructureData) -> bool:

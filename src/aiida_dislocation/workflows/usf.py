@@ -18,7 +18,7 @@ class USFWorkChain(BaseRestartWorkChain):
 
     _workflow_name = 'gsfe'
     _workflow_description = 'GSFE WorkChain'
-
+    _RY2eV    = 13.605693122990
     _RYA22Jm2 = 4.3597447222071E-18/2 * 1E+20 
     _eVA22Jm2 = 1.602176634E-19 * 1E+20 
     # Strukturtyp, gliding plane, slipping direction
@@ -184,7 +184,7 @@ class USFWorkChain(BaseRestartWorkChain):
         )
 
     def validate_slipping_system(self):
-        structure_type, gliding_plane = self.inputs.slipping_system
+        structure_type, gliding_plane, slipping_direction = self.inputs.slipping_system
 
         if structure_type in self._IMPLEMENTED_SLIPPING_SYSTEMS:
             self.report(f'{self._IMPLEMENTED_SLIPPING_SYSTEMS[structure_type]["info"]}')
@@ -192,9 +192,14 @@ class USFWorkChain(BaseRestartWorkChain):
             if gliding_plane in possible_gliding_planes:
                 self.report(f'Now we are working on {gliding_plane} gliding plane.')
                 if possible_gliding_planes[gliding_plane]['faulting_possible']:
-                    self.report(f'Faulting is possible for {gliding_plane} gliding plane.'
-                                f'The stacking order is {possible_gliding_planes[gliding_plane]["stacking"]}. '
-                                f'Slipping direction: {possible_gliding_planes[gliding_plane]["slipping_direction"]}. ')
+                    self.report(
+                        f'Faulting is possible for {gliding_plane} gliding plane.'
+                        f'The stacking order is {possible_gliding_planes[gliding_plane]["stacking"]}. '
+                        )
+                    if slipping_direction:
+                        self.report(
+                            f'Slipping direction is manually specified: {slipping_direction}. '
+                            )
                 else:
                     raise ValueError(f'Faulting is not possible for {gliding_plane} gliding plane.')
             else:
@@ -237,6 +242,8 @@ class USFWorkChain(BaseRestartWorkChain):
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF
 
+        self.report(f"Totel energy of unit cell: {calcjob.outputs.output_parameters.get('energy') / self._RY2eV} Ry")
+        
         self.report(f'SCF calculation<{self.ctx.workchain_scf_uc.pk}> finished')
 
 
@@ -292,9 +299,10 @@ class USFWorkChain(BaseRestartWorkChain):
 
             energy_difference = total_energy_faulted_geometry - total_energy_unit_cell * self.ctx.multiplicity
 
-            USF = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2
+            ## $\gamma = \frac{E_{USF} - E_{UC}}{2 \times A}$
+            USF = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2 / 2
 
-            self.report(f'Energy difference per surface area: {USF} J/m^2')
+            self.report(f'Energy difference per surface area: {USF.value} J/m^2')
         else:
             self.report(f'Total energy of the faulted geometry: {total_energy_faulted_geometry} eV')
 
