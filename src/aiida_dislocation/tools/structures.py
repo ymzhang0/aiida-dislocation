@@ -191,9 +191,11 @@ def get_unstable_faulted_structure_and_kpoints(
             planer_config = {
                 'A': [[ATOM, 0.0, 0.0],],
                 'B': [[ATOM, 1/2, 1/2],],
+                'C': [[ATOM, 0.0, 1/2],],
+                'D': [[ATOM, 1/2, 1/2],],
             }
 
-            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
             for idx, st in enumerate(falted_stacking):
                 for value in planer_config[st]:
@@ -229,9 +231,11 @@ def get_unstable_faulted_structure_and_kpoints(
             planer_config = {
                 'A': [[ATOM, 0.0, 0.0],],
                 'B': [[ATOM, 1/2, 1/2],],
+                'C': [[ATOM, 0.0, 1/2],],
+                'D': [[ATOM, 1/2, 0.0],],
             }
 
-            falted_stacking = 'AB' * int(n_layers/4) + 'BA' * int(n_layers/4)
+            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
 
             for idx, st in enumerate(falted_stacking):
                 for value in planer_config[st]:
@@ -288,7 +292,7 @@ def get_unstable_faulted_structure_and_kpoints(
             multiplicity = n_layers - 1
 
             surface_area = A * A * sqrt(3) / 4
-              
+           
     elif structure_type == 'A15':
         pass
     elif structure_type == 'B1':
