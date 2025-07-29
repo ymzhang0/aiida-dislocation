@@ -1,25 +1,30 @@
 pw:
+    # settings:
+    #     cmdline:
+    #         - '-npool'
+    #         - '4'
     metadata:
         options:
             resources:
                 num_machines: 4
                 num_mpiprocs_per_machine: 112
                 num_cores_per_machine: 112
-            max_wallclock_seconds: 7200
+            max_wallclock_seconds: 3600
             account: ehpc14
-            queue_name: gp_ehpc
-            qos: gp_ehpc
+            queue_name: gp_debug
+            qos: gp_debug
             append_text: rm out/*wfc*
 
     parameters:
         CONTROL:
             calculation: scf
             tstress: True
+            disk_io: nowf
         SYSTEM:
             ecutwfc: 100
             ecutrho: 400
             smearing: cold
-            degauss: 0.01
+            degauss: 0.02
             nosym: False
             noinv: False
             occupations: smearing
@@ -28,5 +33,6 @@ pw:
             conv_thr: 1e-6
 
 skip_uc: False
+do_surface_energy: True
 n_layers: 8
 

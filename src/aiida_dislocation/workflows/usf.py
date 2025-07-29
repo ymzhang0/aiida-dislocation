@@ -153,7 +153,8 @@ class USFWorkChain(BaseRestartWorkChain):
         spec.input('slipping_system', valid_type=orm.List, required=True,
                 help="""
                 """)
-        
+        spec.input('do_surface_energy', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(False),
+                help='Whether to calculate the surface energy')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
         spec.input('kpoints', valid_type=orm.KpointsData, required=True,)
 
@@ -168,6 +169,10 @@ class USFWorkChain(BaseRestartWorkChain):
             ),
             cls.run_USF,
             cls.inspect_USF,
+            if_(cls.should_run_surface_energy)(
+                cls.run_surface_energy,
+                cls.inspect_surface_energy,
+            ),
             cls.results,
         )
 
@@ -181,6 +186,12 @@ class USFWorkChain(BaseRestartWorkChain):
             402,
             "ERROR_SUB_PROCESS_FAILED_USF",
             message='The `PwCalculation` for the USF run failed.',
+        )
+
+        spec.exit_code(
+            403,
+            "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
+            message='The `PwCalculation` for the surface energy calculation failed.',
         )
 
     def validate_slipping_system(self):
@@ -209,7 +220,27 @@ class USFWorkChain(BaseRestartWorkChain):
 
             
     def setup(self):
-        pass
+        """
+        Get the unstable faulted structure and kpoints for the supercell.
+        """
+        structure_sc, kpoints_sc, multiplicity, surface_area, structure_cl, kpoints_cl, multiplicity_cl = get_unstable_faulted_structure_and_kpoints(
+            self.inputs.structure, self.inputs.kpoints, self.inputs.n_layers, self.inputs.slipping_system
+            )
+        
+        if not is_primitive_cell(self.inputs.structure):
+            self.logger.warning(
+                'Composition between the structure and primitive cell are different.' 
+                'You might use a non-primitive cell.'
+                'The results might be incorrect.')
+
+        self.ctx.structure_sc = structure_sc
+        self.ctx.kpoints_sc = kpoints_sc
+        self.ctx.multiplicity = multiplicity
+        self.ctx.surface_area = surface_area
+
+        self.ctx.structure_cl = structure_cl
+        self.ctx.kpoints_cl = kpoints_cl
+        self.ctx.multiplicity_cl = multiplicity_cl
 
     def should_run_uc(self):
         if self.inputs.skip_uc:
@@ -217,6 +248,10 @@ class USFWorkChain(BaseRestartWorkChain):
                 "You are skipping the unitcell calculation. "
                 "Hopefully you know what you are doing!"
             )   
+        else:
+            self.report(
+                "We firstly calculate the total energy of the unit cell. "
+            )
 
         return not self.inputs.skip_uc
     def run_scf(self):
@@ -251,26 +286,11 @@ class USFWorkChain(BaseRestartWorkChain):
 
         inputs = AttributeDict(self.exposed_inputs(PwCalculation, namespace='pw'))
         inputs.metadata.call_link_label = f'scf_faulted_supercell'
-        structure_uc = self.inputs.structure
-        kpoints_uc = self.inputs.kpoints
 
-        if not is_primitive_cell(structure_uc):
-            self.logger.warning(
-                'Composition between the structure and primitive cell are different.' 
-                'You might use a non-primitive cell.'
-                'The results might be incorrect.')
 
-        structure_sc, kpoints_sc, multiplicity, surface_area = get_unstable_faulted_structure_and_kpoints(
-            structure_uc, kpoints_uc, self.inputs.n_layers, self.inputs.slipping_system
-            )
-        
+        inputs.structure = self.ctx.structure_sc
+        inputs.kpoints = self.ctx.kpoints_sc
 
-        inputs.structure = structure_sc
-        inputs.kpoints = kpoints_sc
-
-        self.report(f'Multiplicity of the faulted geometry: {multiplicity.value}')
-        self.ctx.multiplicity = multiplicity
-        self.ctx.surface_area = surface_area
 
         running = self.submit(PwCalculation, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for USF geometry.')
@@ -289,10 +309,46 @@ class USFWorkChain(BaseRestartWorkChain):
         self.report(
             f'SCF calculation<{self.ctx.workchain_scf_faulted_geometry.pk}> for USF geometry finished'
             )
+        
+    def should_run_surface_energy(self):
+        if self.inputs.do_surface_energy:
+            self.report(
+                "We secondly calculate the surface energy of the faulted geometry. "
+            )
+        else:
+            self.report(
+                "We skip the surface energy calculation. "
+                )
+        return self.inputs.do_surface_energy
 
+    def run_surface_energy(self):
+        inputs = AttributeDict(self.exposed_inputs(PwCalculation, namespace='pw'))
+        inputs.metadata.call_link_label = f'surface_energy'
+
+        inputs.structure = self.ctx.structure_cl
+        inputs.kpoints = self.ctx.kpoints_cl
+
+        running = self.submit(PwCalculation, **inputs)
+        self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
+
+        self.to_context(workchain_surface_energy = running)
+
+    def inspect_surface_energy(self):
+        
+        calcjob = self.ctx.workchain_surface_energy
+
+        if not calcjob.is_finished_ok:
+            self.report(
+                f"surface energy {calcjob.process_label} failed with exit status {calcjob.exit_status}"
+            )
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
 
     def results(self):
         total_energy_faulted_geometry = self.ctx.workchain_scf_faulted_geometry.outputs.output_parameters.get('energy')
+        if self.inputs.do_surface_energy:
+            total_energy_surface_energy = self.ctx.workchain_surface_energy.outputs.output_parameters.get('energy')
+        else:
+            total_energy_surface_energy = None
 
         if not self.inputs.skip_uc:
             total_energy_unit_cell = self.ctx.workchain_scf_uc.outputs.output_parameters.get('energy')
@@ -302,8 +358,17 @@ class USFWorkChain(BaseRestartWorkChain):
             ## $\gamma = \frac{E_{USF} - E_{UC}}{2 \times A}$
             USF = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2 / 2
 
-            self.report(f'Energy difference per surface area: {USF.value} J/m^2')
+            self.report(f'Unstable faulted surface energy: {USF.value} J/m^2')
+            
+            if self.inputs.do_surface_energy:
+                total_energy_slab = self.ctx.workchain_surface_energy.outputs.output_parameters.get('energy')
+                SE = (total_energy_unit_cell * self.ctx.multiplicity_cl - total_energy_slab ) * 2 / self.ctx.surface_area * self._eVA22Jm2
+                self.report(f'Surface energy: {SE.value} J/m^2')
+                
+                Rice_ratio = USF / SE
+                self.report(f'Rice ratio: {Rice_ratio.value}')
         else:
             self.report(f'Total energy of the faulted geometry: {total_energy_faulted_geometry} eV')
-
+            if self.inputs.do_surface_energy:
+                self.report(f'Total energy of the cleaved geometry: {total_energy_surface_energy} eV')
         self.report(f'Results')

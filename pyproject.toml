@@ -65,10 +65,12 @@ tests = [
 [project.scripts]
 
 [project.entry-points.'aiida.calculations']
+'dislocation.thermo_pw' = 'aiida_dislocation.calculations.thermo_pw:Thermo_pwBaseCalculation'
 
 [project.entry-points.'aiida.data']
 
 [project.entry-points.'aiida.parsers']
+'dislocation.thermo_pw' = 'aiida_dislocation.parsers.thermo_pw:ThermoPwParser'
 
 [project.entry-points.'aiida.tools.calculations']
 
