@@ -1,20 +1,28 @@
+from tkinter import W
 from aiida import orm
-from aiida.common import AttributeDict, datastructures, exceptions
-from aiida.common.lang import classproperty
-from aiida.plugins import factories
+from aiida.common import AttributeDict
+from aiida.engine import WorkChain, ToContext, if_, while_, append_
+
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
+
+from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 
 from aiida.engine import CalcJob, BaseRestartWorkChain, ExitCode, process_handler, while_, if_
 from aiida_quantumespresso.calculations.pw import PwCalculation
 
 import logging
 
-from ..tools.structures import get_supercell_structure_and_kpoints
+from ..tools import get_unstable_faulted_structure_and_kpoints
 
 
-class GSFEWorkChain(BaseRestartWorkChain):
+class GSFEWorkChain(ProtocolMixin, WorkChain):
     """GSFE WorkChain"""
 
-    _process_class = PwCalculation
+    _PW_SCF_NAMESPACE = "pw_scf"
+    _PW_USF_NAMESPACE = "pw_usf"
+    _PW_SURFACE_ENERGY_NAMESPACE = "pw_surface_energy"
+    _PW_CURVE_NAMESPACE = "pw_curve"
 
     _workflow_name = 'gsfe'
     _workflow_description = 'GSFE WorkChain'
@@ -38,20 +46,8 @@ class GSFEWorkChain(BaseRestartWorkChain):
     def define(cls, spec):
         super().define(spec)
 
-        # spec.input('gliding_plane', val   id_type=orm.List, required=True, 
-        #            help='The gliding plane of the dislocation')
-        spec.input('skip_uc', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(False),
-                   help='Whether to skip the unitcell calculation')
         spec.input('n_layers', valid_type=orm.Int, required=True, default=lambda: orm.Int(4),
                    help='The number of layers in the supercell')
-        # spec.input('slipping_direction', valid_type=orm.List, required=True, 
-        #            help='The slipping direction of the dislocation')
-        spec.input('only_USF', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(True),
-                   help='Whether to do a series of stacking faults')
-        spec.input('do_surface', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(False),
-                   help='Whether to do a surface energy calculation')
-        spec.input('do_curve', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(False),
-                   help='Whether to do a curve calculation')
         spec.input('nsteps', valid_type=orm.Int, required=False, default=lambda: orm.Int(10),
                    help='The number of stacking faults ')
         spec.input('slipping_system', valid_type=orm.List, required=True,
@@ -61,32 +57,55 @@ class GSFEWorkChain(BaseRestartWorkChain):
                    B1, 100, 100
                    B1, 110, 110
                    """)
-        
+
         spec.input('structure', valid_type=orm.StructureData, required=True,)
         spec.input('kpoints', valid_type=orm.KpointsData, required=True,)
 
-        spec.expose_inputs(PwCalculation, namespace='pw', exclude=('structure', 'kpoints'))
+        spec.expose_inputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_SCF_NAMESPACE,
+            exclude=('structure', 'kpoints')
+        )
+        spec.expose_inputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_USF_NAMESPACE,
+            exclude=('structure', 'kpoints')
+            )
+
+        spec.expose_inputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
+            exclude=('structure', 'kpoints')
+            )
+
+        spec.expose_inputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_CURVE_NAMESPACE,
+            exclude=('structure', 'kpoints')
+            )
 
         spec.outline(
             cls.validate_slipping_system,
             cls.setup,
-            if_(cls.should_run_uc)(
+            if_(cls.should_run_relax)(
+                cls.run_relax,
+                cls.inspect_relax,
+            ),
+            if_(cls.should_run_scf)(
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            if_(cls.should_run_USF)(
-                cls.run_USF,
-                cls.inspect_USF,
+            if_(cls.should_run_usf)(
+                cls.run_usf,
+                cls.inspect_usf,
             ),
             if_(cls.should_run_curve)(
-            while_(cls.should_continue_curve)(
-                cls.run_scf,
-                cls.inspect_scf,
-                ),
+                cls.run_curve,
+                cls.inspect_curve,
             ),
-            if_(cls.should_run_surface)(
-                cls.run_surface,
-                cls.inspect_surface,
+            if_(cls.should_run_surface_energy)(
+                cls.run_surface_energy,
+                cls.inspect_surface_energy,
             ),
             cls.results,
         )
@@ -160,7 +179,8 @@ class GSFEWorkChain(BaseRestartWorkChain):
                 raise NotImplementedError(f'Not implemented yet. But faulting possible.')
 
     def setup(self):
-
+        self.ctx.current_structure = self.inputs.structure
+        self.ctx.kpoints = self.inputs.kpoints
         self.ctx.sf_count = 0
         self.ctx.sf_energy = []
         self.ctx.sf_stress = []
@@ -168,72 +188,136 @@ class GSFEWorkChain(BaseRestartWorkChain):
         self.ctx.sf_displacement = []
         self.ctx.sf_displacement = []
 
-    def should_run_uc(self):
-        if self.inputs.skip_uc:
-            self.logger.warning(
-                "You are skipping the unitcell calculation."
-                "Hopefully you know what you are doing!"
-            )   
+    def should_run_relax(self):
+        return self._PW_RELAX_NAMESPACE in self.inputs
 
-        return not self.inputs.skip_uc
-    def run_scf(self):
-        inputs = AttributeDict(self.exposed_inputs(PwCalculation, namespace='pw'))
-
-        inputs.metadata.call_link_label = f'scf_uc'
-
+    def run_relax(self):
+        inputs = AttributeDict(self.exposed_inputs(PwRelaxWorkChain, namespace='pw'))
+        inputs.metadata.call_link_label = f'relax_uc'
         inputs.structure = self.inputs.structure
         inputs.kpoints = self.inputs.kpoints
+        running = self.submit(PwRelaxWorkChain, **inputs)
+        self.report(f'launching PwRelaxWorkChain<{running.pk}> for unitcell {self.inputs.structure.get_formula()}')
+        self.to_context(workchain_relax_uc = running)
 
-        running = self.submit(PwCalculation, **inputs)
+    def inspect_relax(self):
+        workchain = self.ctx.workchain_relax_uc
+        if not workchain.is_finished_ok:
+            self.report(f'Relax calculation<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_RELAX
+
+        self.report(f'Relax calculation<{self.ctx.workchain_relax_uc.pk}> finished')
+
+        self.ctx.current_structure = workchain.outputs.structure
+
+    def should_run_scf(self):
+        return self._PW_SCF_NAMESPACE in self.inputs
+
+    def run_scf(self):
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwBaseWorkChain,
+                namespace=self._PW_SCF_NAMESPACE
+                )
+            )
+
+        inputs.metadata.call_link_label = self._PW_SCF_NAMESPACE
+
+        inputs.structure = self.ctx.current_structure
+        inputs.kpoints = self.ctx.kpoints
+
+        running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for unitcell {self.inputs.structure.get_formula()}')
 
         self.to_context(workchain_scf_uc = running)
 
     def inspect_scf(self):
+        workchain = self.ctx.workchain_scf_uc
+        if not workchain.is_finished_ok:
+            self.report(f'SCF calculation<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF
+
         self.report(f'SCF calculation<{self.ctx.workchain_scf_uc.pk}> finished')
 
-    def should_run_USF(self):
+    def should_run_usf(self):
 
         return self.inputs.only_USF
 
-    def run_USF(self):
+    def run_usf(self):
 
-        inputs = AttributeDict(self.exposed_inputs(PwCalculation, namespace='pw'))
-        inputs.metadata.call_link_label = f'scf_faulted_supercell'
-        structure_uc = self.inputs.structure
-        kpoints_uc = self.inputs.kpoints
-        structure_sc, kpoints_sc = get_supercell_structure_and_kpoints(
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwBaseWorkChain,
+                namespace=self._PW_USF_NAMESPACE
+                )
+            )
+        inputs.metadata.call_link_label = self._PW_USF_NAMESPACE
+        structure_uc = self.ctx.current_structure
+        kpoints_uc = self.ctx.kpoints
+        structure_sc, kpoints_sc = get_unstable_faulted_structure_and_kpoints(
             structure_uc, kpoints_uc, self.inputs.n_layers, self.inputs.slipping_system
             )
         inputs.structure = structure_sc
         inputs.kpoints = kpoints_sc
 
-        running = self.submit(PwCalculation, **inputs)
+        running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for faulted supercell.')
 
         self.to_context(workchain_scf_faulted_supercell = running)
 
-    def inspect_USF(self):
-        self.report(f'USF calculation<{self.ctx.workchain_scf_faulted_supercell.pk}> finished')
+    def inspect_usf(self):
+        workchain = self.ctx.workchain_scf_faulted_supercell
+        if not workchain.is_finished_ok:
+            self.report(f'USF calculation<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
 
+        self.report(f'USF calculation<{self.ctx.workchain_scf_faulted_supercell.pk}> finished')
+        self.ctx.current_structure = workchain.outputs.structure
+        self.ctx.kpoints = workchain.outputs.kpoints
 
     def should_run_curve(self):
-        return self.inputs.do_curve
+        return self._PW_CURVE_NAMESPACE in self.inputs
 
     def run_curve(self):
-        pass
+        inputs = AttributeDict(self.exposed_inputs(PwBaseWorkChain, namespace=self._PW_CURVE_NAMESPACE))
+        inputs.metadata.call_link_label = self._PW_CURVE_NAMESPACE
+        inputs.structure = self.ctx.current_structure
+        inputs.kpoints = self.ctx.kpoints
+        running = self.submit(PwBaseWorkChain, **inputs)
+        self.report(f'launching PwCalculation<{running.pk}> for curve calculation.')
+        self.to_context(workchain_curve = running)
 
-    def should_continue_curve(self):
-        return True
-    
-    def should_run_surface(self):
-        return self.inputs.do_surface
+    def inspect_curve(self):
+        workchain = self.ctx.workchain_curve
+        if not workchain.is_finished_ok:
+            self.report(f'Curve calculation<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_CURVE
 
-    def run_surface(self):
-        pass
+        self.report(f'Curve calculation<{self.ctx.workchain_curve.pk}> finished')
+        self.ctx.current_structure = workchain.outputs.structure
+        self.ctx.kpoints = workchain.outputs.kpoints
 
-    def inspect_surface(self):
-        self.report(f'Surface calculation<{self.ctx.workchain_surface.pk}> finished')
+    def should_run_surface_energy(self):
+        return self._PW_SURFACE_ENERGY_NAMESPACE in self.inputs
+
+    def run_surface_energy(self):
+        inputs = AttributeDict(self.exposed_inputs(PwBaseWorkChain, namespace=self._PW_SURFACE_ENERGY_NAMESPACE))
+        inputs.metadata.call_link_label = self._PW_SURFACE_ENERGY_NAMESPACE
+        inputs.structure = self.ctx.current_structure
+        inputs.kpoints = self.ctx.kpoints
+        running = self.submit(PwBaseWorkChain, **inputs)
+        self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
+        self.to_context(workchain_surface_energy = running)
+
+    def inspect_surface_energy(self):
+        workchain = self.ctx.workchain_surface_energy
+        if not workchain.is_finished_ok:
+            self.report(f'Surface energy calculation<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
+
+        self.report(f'Surface energy calculation<{self.ctx.workchain_surface_energy.pk}> finished')
+        self.ctx.current_structure = workchain.outputs.structure
+        self.ctx.kpoints = workchain.outputs.kpoints
 
     def results(self):
         self.report(f'Results')

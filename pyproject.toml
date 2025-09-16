@@ -23,7 +23,7 @@ keywords = ['aiida', 'workflows']
 requires-python = '>=3.8'
 dependencies = [
     'aiida_core[atomic_tools]~=2.6',
-    'aiida-quantumespresso~=4.7.0',
+    'aiida-quantumespresso>=4.12',
     'aiida-pseudo~=1.1',
     'click~=8.0',
     'importlib_resources',
@@ -65,12 +65,10 @@ tests = [
 [project.scripts]
 
 [project.entry-points.'aiida.calculations']
-'dislocation.thermo_pw' = 'aiida_dislocation.calculations.thermo_pw:Thermo_pwBaseCalculation'
 
 [project.entry-points.'aiida.data']
 
 [project.entry-points.'aiida.parsers']
-'dislocation.thermo_pw' = 'aiida_dislocation.parsers.thermo_pw:ThermoPwParser'
 
 [project.entry-points.'aiida.tools.calculations']
 
