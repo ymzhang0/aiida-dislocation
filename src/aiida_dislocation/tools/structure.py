@@ -1,14 +1,48 @@
+from tkinter.constants import NONE
 from aiida import orm
 from math import sqrt, acos, pi, ceil
 import numpy
 import logging
+from ase import Atoms
 from ase.spacegroup import get_spacegroup
 from ase.build import make_supercell
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 import pathlib
 import typing as ty
 
+class AttributeDict(dict):
+    """
+    A dictionary that can be accessed like an attribute.
+    """
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        try:
+            del self[name]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
 # logger = logging.getLogger('aiida.workflow.dislocation')
+_DEFAULT_P = {
+    'A1': {
+        '111':[
+            [1, -1, 0],
+            [1, 1, -2],
+            [1, 1, 1]
+        ]
+        },
+}
+
+def check_bravais_lattice(ase_atoms):
+    bl = ase_atoms.cell.get_bravais_lattice(eps=1e-6)
+    return bl.name
 
 def read_structure_from_file(
     filename: ty.Union[str, pathlib.Path],
@@ -38,30 +72,114 @@ def read_structure_from_file(
 
     return struct
 
+def group_by_layers(ase_atoms, decimals=6):
+    """
+    Splits an ASE Atoms object into multiple layers based on z-coordinates.
+
+    Args:
+        atoms (ase.Atoms): The input Atoms object to be split.
+        decimals (int): The number of decimal places to round the z-coordinates
+                        to for grouping atoms into layers. This acts as a tolerance.
+
+    Returns:
+        dict: A dictionary where keys are the unique z-coordinates of the layers
+              and values are new Atoms objects, each containing one layer.
+    """
+    import string
+
+    if not ase_atoms:
+        return {}
+
+    scaled_positions = ase_atoms.get_scaled_positions()
+
+    z_coords = scaled_positions[:, 2]
+    rounded_z = numpy.round(z_coords, decimals=decimals)
+
+    sorted_unique_z = sorted(numpy.unique(rounded_z))
+
+    labels = string.ascii_uppercase
+    if len(sorted_unique_z) > len(labels):
+        print(f"Warning: Number of layers ({len(sorted_unique_z)}) exceeds number of labels ({len(labels)}).")
+        labels = [f"Layer_{i+1}" for i in range(len(sorted_unique_z))]
+
+    labeled_layers_dict = {}
+
+    for i, z_val in enumerate(sorted_unique_z):
+        layer_label = labels[i]
+        indices = numpy.where(rounded_z == z_val)[0]
+        layer_content = [ase_atoms[idx] for idx in indices]
+        labeled_layers_dict[layer_label] = {'atoms': layer_content}
+
+    sorted_unique_z.append(sorted_unique_z[0] + 1)
+    for z_prev, z, layer_label in zip(sorted_unique_z[:-1], sorted_unique_z[1:], labeled_layers_dict.keys()):
+        labeled_layers_dict[layer_label]['spacing'] = z - z_prev
+
+    return labeled_layers_dict
+
+def build_atoms_from_stacking(
+    ase_atoms_uc,
+    stacking_order,
+    zs,
+    layers_dict,
+    ):
+    atoms = Atoms()
+    z_dialation = len(stacking_order) / len(layers_dict)
+    new_cell = ase_atoms_uc.cell.array
+    new_cell[-1] *= z_dialation
+    atoms.set_cell(new_cell)
+    for layer_label, z in zip(stacking_order, zs):
+        for atom in layers_dict[layer_label]['atoms']:
+            atom.scaled_position[-1] = z
+            atoms.append(atom)
+    return atoms
+
 def get_unstable_faulted_structure_and_kpoints(
         ase_atoms_uc,
-        P,
-        n_layers = 1,
-        slipping_direction = None,
+        structure_type,
+        gliding_plane,
+        P = None,
+        n_layers = 3,
+        burger_vector = None,
         vacuum_ratio = 0,
     ):
 
+    if not P:
+        P = _DEFAULT_P[structure_type][gliding_plane]
     ase_atoms_sc = make_supercell(ase_atoms_uc, P)
-    ase_atoms_sc_nlayers = ase_atoms_sc.repeat([1, 1, n_layers])
 
-    if slipping_direction:
-        planer_config['C'] = [
-            [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-            for ATOM, x, y in planer_config['A']
-        ]
-        planer_config['D'] = [
-            [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-            for ATOM, x, y in planer_config['B']
-        ]
-    else:
-        planer_config['C'] = [[ATOM, 0.0, 0.5],]
-        planer_config['D'] = [[ATOM, 0.5, 0.0],]
-    return ase_atoms_sc_nlayers
+    layers_dict = group_by_layers(ase_atoms_sc)
+    # ase_atoms_sc_nlayers = ase_atoms_sc.repeat([1, 1, n_layers])
+
+    if structure_type == 'A1':
+
+        if len(layers_dict) != 3:
+            raise ValueError(
+                f'We found {len(layers_dict)} layers.'
+                'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
+
+        stacking_order = n_layers * 'ABC'
+        stacking_order_r = n_layers * 'CBA'
+
+        # ...ABC*(A)BCABC...
+        stacking_order_isf = stacking_order[:3] + stacking_order[4:]
+        # ...ABC*(A)B(C)ABC...
+        stacking_order_esf  = stacking_order[:3] + stacking_order[4] + stacking_order[6:]
+        # ...ABC*ACBA
+        stacking_order_tf  = stacking_order + stacking_order_r[1:-1] + stacking_order
+
+        default_faulted = AttributeDict({
+            'intrinsic': build_atoms_from_stacking(
+            ase_atoms_uc, stacking_order_isf, zs, layers_dict
+            ),
+            'extrinsic': build_atoms_from_stacking(
+            ase_atoms_uc, stacking_order_esf, zs, layers_dict
+            ),
+            'twinning': build_atoms_from_stacking(
+            ase_atoms_uc, stacking_order_tf, zs, layers_dict
+            ),
+        })
+
+    return default_faulted
 
 def get_unstable_faulted_structure_and_kpoints_old(
         structure_uc: orm.StructureData,

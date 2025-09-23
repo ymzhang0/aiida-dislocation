@@ -1,0 +1,25 @@
+metadata:
+    options:
+        withmpi: True
+
+parameters:
+    CONTROL:
+        calculation: scf
+    SYSTEM:
+        nosym: False
+        noinv: False
+
+pw_base_uc:
+    pw:
+        metadata: *metadata
+        parameters: *parameters
+
+pw_base_usf:
+    pw:
+        metadata: *metadata
+        parameters: *parameters
+
+pw_base_surface:
+    pw:
+        metadata: *metadata
+        parameters: *parameters

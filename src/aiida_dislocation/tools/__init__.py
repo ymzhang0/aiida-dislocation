@@ -1,5 +1,9 @@
 from .structure import (
+    _DEFAULT_P,
     read_structure_from_file,
+    check_bravais_lattice,
+    group_by_layers,
+    build_atoms_from_stacking,
     get_unstable_faulted_structure_and_kpoints,
     is_primitive_cell,
     get_elements_for_wyckoff_symbols,
@@ -20,8 +24,13 @@ from .cut import (
 )
 
 __all__ = (
+    '_DEFAULT_P',
     'read_structure_from_file',
+    'group_by_layers',
+    'check_bravais_lattice',
     'get_unstable_faulted_structure_and_kpoints',
+    'check_bravais_lattice',
+    'build_atoms_from_stacking',
     'is_primitive_cell',
     'get_elements_for_wyckoff_symbols',
     'get_kpoints_mesh_for_supercell',
