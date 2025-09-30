@@ -1,6 +1,6 @@
 default_inputs:
   clean_workdir: True
-  kpoints_distance: 0.3
+  kpoints_distance: 0.5
   pw_relax:
       metadata:
           options:
@@ -11,7 +11,7 @@ default_inputs:
           options:
               withmpi: True
 
-  pw_usfe:
+  pw_isfe:
       metadata:
           options:
               withmpi: True

@@ -75,8 +75,9 @@ tests = [
 [project.entry-points.'aiida.tools.data.orbitals']
 
 [project.entry-points.'aiida.workflows']
-'dislocation.usf' = 'aiida_dislocation.workflows.usf:USFWorkChain'
-'dislocation.gsfe' = 'aiida_dislocation.workflows.gsfe:GSFEWorkChain'
+'dislocation.isfe' = 'aiida_dislocation.workflows.isfe:ISFEWorkChain'
+'dislocation.usfe' = 'aiida_dislocation.workflows.usfe:USFEWorkChain'
+'dislocation.twinning' = 'aiida_dislocation.workflows.twinning:TwinningWorkChain'
 
 [tool.flit.module]
 name = 'aiida_dislocation'

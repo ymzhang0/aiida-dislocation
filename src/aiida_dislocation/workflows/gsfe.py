@@ -13,7 +13,7 @@ from aiida_quantumespresso.calculations.pw import PwCalculation
 
 import logging
 
-from ..tools import get_unstable_faulted_structure_and_kpoints
+from ..tools import get_unstable_faulted_structure
 
 
 class GSFEWorkChain(ProtocolMixin, WorkChain):
@@ -85,7 +85,6 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             )
 
         spec.outline(
-            cls.validate_slipping_system,
             cls.setup,
             if_(cls.should_run_relax)(
                 cls.run_relax,
@@ -109,74 +108,6 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             ),
             cls.results,
         )
-
-    def validate_slipping_system(self):
-        structure_type, gliding_plane, slipping_direction = slipping_system = self.inputs.slipping_system
-        if (structure_type, gliding_plane, slipping_direction) not in self._IMPLEMENTED_SLIPPING_SYSTEMS:
-            raise NotImplementedError(f'Slipping system {self.inputs.slipping_system} not implemented')
-
-        structure_type, gliding_plane, slipping_direction = slipping_system = self.inputs.slipping_system
-
-        if structure_type == 'A1':
-            if gliding_plane == '100':
-                self.report(f'AB stacking for 100 gliding plane. Faulting possible.')
-            if gliding_plane == '110':
-                self.report(f'AB stacking for 100 gliding plane. Faulting possible.')
-            if gliding_plane == '111':
-                self.report(f'ABC stacking for 111 gliding plane.Faulting possible.')
-
-        if structure_type == 'A2':
-            if gliding_plane == '100':
-                raise ValueError(f'Only 100 gliding plane for A2 structure')
-            if gliding_plane == '110':
-                self.report(f'Not implemented yet. But faulting possible.')
-            if gliding_plane == '111':
-                self.report(f'ABC stacking for 111 gliding plane. Faulting possible.')
-
-        if structure_type == 'B1':
-            self.report(f'We are doing NaCl-type structure. space group (225).')
-            if gliding_plane == '100':
-                raise ValueError(f'Only 1 type of stacking for 100 gliding plane. No faulting possible.')
-            if gliding_plane == '110':
-                self.report(f'AB stacking for 110 gliding plane. Faulting possible.')
-            if gliding_plane == '111':
-                raise NotImplementedError(f'Not implemented yet. But faulting possible.')
-
-        if structure_type == 'B2':
-            self.report(f'We are doing CsCl-type structure. space group (229).')
-            if gliding_plane == '100':
-                raise ValueError(f'Only 1 type of stacking for 100 gliding plane. No faulting possible.')
-            if gliding_plane == '110':
-                self.report(f'AB stacking for 110 gliding plane. Faulting possible.')
-            if gliding_plane == '111':
-                raise NotImplementedError(f'Not implemented yet. But faulting possible.')
-
-        if structure_type == 'C1':
-            self.report(f'We are doing pyrite-type structure.')
-            if gliding_plane == '100':
-                raise NotImplementedError(f'Not implemented yet.')
-            if gliding_plane == '110':
-                raise NotImplementedError(f'Not implemented yet.')
-            if gliding_plane == '111':
-                raise NotImplementedError(f'Not implemented yet.')
-
-        if structure_type == 'C1b':
-            self.report(f'We are doing half-heusler-type structure, space group (216).')
-            if gliding_plane == '100':
-                self.report(f'ABCB stacking for 100 gliding plane. Faulting possible.')
-            if gliding_plane == '110':
-                self.report(f'AB stacking for 110 gliding plane. Faulting possible.')
-            if gliding_plane == '111':
-                raise NotImplementedError(f'Not implemented yet. But faulting possible.')
-
-        if structure_type == 'E21':
-            self.report(f'We are doing perovskite-type structure, space group (221).')
-            if gliding_plane == '100':
-                raise ValueError(f'AB stacking for for 100 gliding plane. Faulting possible.')
-            if gliding_plane == '110':
-                self.report(f'ABCB stacking for 110 gliding plane. Faulting possible.')
-            if gliding_plane == '111':
-                raise NotImplementedError(f'Not implemented yet. But faulting possible.')
 
     def setup(self):
         self.ctx.current_structure = self.inputs.structure

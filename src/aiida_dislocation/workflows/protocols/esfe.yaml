@@ -1,24 +1,25 @@
-clean_workdir: True
-skip_uc: False
-pw_relax:
-    metadata:
-        options:
-            withmpi: True
+default_inputs:
+  clean_workdir: True
+  kpoints_distance: 0.5
+  pw_relax:
+      metadata:
+          options:
+              withmpi: True
 
-pw_scf:
-    metadata:
-        options:
-            withmpi: True
+  pw_scf:
+      metadata:
+          options:
+              withmpi: True
 
-pw_usf:
-    metadata:
-        options:
-            withmpi: True
+  pw_esfe:
+      metadata:
+          options:
+              withmpi: True
 
-pw_surface_energy:
-    metadata:
-        options:
-            withmpi: True
+  pw_surface_energy:
+      metadata:
+          options:
+              withmpi: True
 
 default_protocol: moderate
 protocols:

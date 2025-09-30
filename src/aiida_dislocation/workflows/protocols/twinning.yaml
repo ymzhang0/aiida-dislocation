@@ -11,7 +11,7 @@ default_inputs:
           options:
               withmpi: True
 
-  pw_usfe:
+  pw_twinning:
       metadata:
           options:
               withmpi: True

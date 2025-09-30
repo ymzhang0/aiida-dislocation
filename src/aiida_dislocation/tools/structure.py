@@ -9,6 +9,8 @@ from ase.build import make_supercell
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 import pathlib
 import typing as ty
+import copy
+import itertools
 
 class AttributeDict(dict):
     """
@@ -38,6 +40,125 @@ _DEFAULT_P = {
             [1, 1, 1]
         ]
         },
+}
+
+_IMPLEMENTED_SLIPPING_SYSTEMS = {
+    'A1': {
+        'info': 'FCC element crystal <space group #225, prototype Cu>. '
+                'Usually, the gliding plane is 111.',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[010]',
+                    'faulting_possible': True,
+                    },
+            '110': {'stacking': 'AB',
+                    'slipping_direction': '1/2[112]',
+                    'faulting_possible': True,
+                    },
+            '111': {'stacking': 'ABC',
+                    'slipping_direction': '1/2[110]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'A2': {
+        'info': 'FCC element crystal <space group #227, prototype V>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[110]',
+                    'faulting_possible': True,
+                    },
+            '110': {'stacking': 'AB',
+                    'slipping_direction': '1/2[001]',
+                    'faulting_possible': True,
+                    },
+            '111': {'stacking': 'ABC',
+                    'slipping_direction': '1/2[011]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'A15': {
+        'info': 'A3B crystal <space group #223, prototype Nb3Sn>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[110]',
+                    'faulting_possible': True,
+                    },
+            '110': {'stacking': 'AB',
+                    'slipping_direction': '1/2[001]',
+                    'faulting_possible': True,
+                    },
+            '111': {'stacking': 'ABC',
+                    'slipping_direction': '1/2[011]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'B1': {
+        'info': 'FCC element crystal <space group #225, prototype NaCl>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[010]',
+                    'faulting_possible': True,
+                    },
+            '110': {'stacking': 'AB',
+                    'slipping_direction': '1/2[112]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'B2': {
+        'info': 'FCC element crystal <space group #229, prototype CsCl>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[010]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'C1': {
+        'info': 'We are doing pyrite-type structure. <space group #205, prototype FeS2>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'ABCD',
+                    'slipping_direction': '1/2[100]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'C1b': {
+        'info': 'We are doing half-heusler-type structure. <space group #216, prototype MgSiAl>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'ABCD',
+                    'slipping_direction': '1/2[100]',
+                    'faulting_possible': True,
+                    },
+            '110': {'stacking': 'AB',
+                    'slipping_direction': '1/2[110]',
+                    'faulting_possible': True,
+                    },
+            '111': {'stacking': 'ABC',
+                    'slipping_direction': '1/2[111]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
+    'E21': {
+        'info': 'We are doing perovskite-type structure. <space group #221, prototype BaTiO3>. '
+                'I don\'t know the usual gliding plane. ',
+        'possible_gliding_planes': {
+            '100': {'stacking': 'AB',
+                    'slipping_direction': '1/2[010]',
+                    'faulting_possible': True,
+                    },
+        }
+    },
 }
 
 def check_bravais_lattice(ase_atoms):
@@ -72,7 +193,10 @@ def read_structure_from_file(
 
     return struct
 
-def group_by_layers(ase_atoms, decimals=6):
+def group_by_layers(
+    ase_atoms,
+    decimals=6,
+    ):
     """
     Splits an ASE Atoms object into multiple layers based on z-coordinates.
 
@@ -86,6 +210,7 @@ def group_by_layers(ase_atoms, decimals=6):
               and values are new Atoms objects, each containing one layer.
     """
     import string
+    from copy import deepcopy
 
     if not ase_atoms:
         return {}
@@ -107,79 +232,245 @@ def group_by_layers(ase_atoms, decimals=6):
     for i, z_val in enumerate(sorted_unique_z):
         layer_label = labels[i]
         indices = numpy.where(rounded_z == z_val)[0]
-        layer_content = [ase_atoms[idx] for idx in indices]
-        labeled_layers_dict[layer_label] = {'atoms': layer_content}
-
-    sorted_unique_z.append(sorted_unique_z[0] + 1)
-    for z_prev, z, layer_label in zip(sorted_unique_z[:-1], sorted_unique_z[1:], labeled_layers_dict.keys()):
-        labeled_layers_dict[layer_label]['spacing'] = z - z_prev
+        layer_content = [deepcopy(ase_atoms[idx]) for idx in indices]
+        labeled_layers_dict[layer_label] = {
+            'atoms': layer_content,
+            'z': z_val
+            }
 
     return labeled_layers_dict
 
-def build_atoms_from_stacking(
+def build_atoms_surface(
     ase_atoms_uc,
-    stacking_order,
-    zs,
+    n_layers,
     layers_dict,
     ):
     atoms = Atoms()
-    z_dialation = len(stacking_order) / len(layers_dict)
-    new_cell = ase_atoms_uc.cell.array
-    new_cell[-1] *= z_dialation
+    return atoms
+    
+def build_atoms_from_stacking_removal(
+    ase_atoms_uc,
+    n_layers,
+    removed_layers,
+    layers_dict,
+    print_info = False,
+    ):
+
+    atoms = Atoms()
+    
+    stacking_order = n_layers * ''.join(layers_dict.keys())
+    if any(layer > len(stacking_order) for layer in removed_layers):
+        raise ValueError(f"Removed layers {removed_layers} is greater than the number of layers {len(layers_dict)}")
+
+    zs = [value['z']/n_layers + layer/n_layers for layer in range(n_layers) for value in layers_dict.values()]
+
+    removed_spacing = 0.0
+    faulted_stacking = "".join([char for i, char in enumerate(stacking_order) if i not in removed_layers])
+    
+    for removed_layer in removed_layers:
+        spacing = zs[removed_layer] - zs[removed_layer - 1]
+        removed_spacing += spacing
+        for z in zs[removed_layer:]:
+            z -= spacing
+
+    for _ in range(len(removed_layers)):
+        zs.pop()
+
+    zs = [z / (1-removed_spacing) for z in zs]
+
+    new_cell = ase_atoms_uc.cell.array.copy()
+    new_cell[-1] *= (1-removed_spacing) * n_layers
     atoms.set_cell(new_cell)
-    for layer_label, z in zip(stacking_order, zs):
+    for layer_label, z in zip(faulted_stacking, zs):
         for atom in layers_dict[layer_label]['atoms']:
-            atom.scaled_position[-1] = z
+            scaled_position = atom.scaled_position
+            scaled_position[-1] = z
+            atom.position = scaled_position @ new_cell
             atoms.append(atom)
     return atoms
 
-def get_unstable_faulted_structure_and_kpoints(
-        ase_atoms_uc,
-        structure_type,
-        gliding_plane,
-        P = None,
-        n_layers = 3,
-        burger_vector = None,
-        vacuum_ratio = 0,
+def build_atoms_from_stacking_mirror(
+    ase_atoms_uc,
+    n_unit_cells,
+    layers_dict,
+    print_info = False,
     ):
 
-    if not P:
-        P = _DEFAULT_P[structure_type][gliding_plane]
-    ase_atoms_sc = make_supercell(ase_atoms_uc, P)
+    atoms = Atoms()
+    cell = ase_atoms_uc.cell.array.copy()
+    z_norm = numpy.linalg.norm(cell[2])
 
-    layers_dict = group_by_layers(ase_atoms_sc)
-    # ase_atoms_sc_nlayers = ase_atoms_sc.repeat([1, 1, n_layers])
+    n_layers_uc = len(layers_dict)
+    stacking_order_uc = ''.join(layers_dict.keys())
+    stacking_order = n_unit_cells * stacking_order_uc
+    stacking_order_uc_r = stacking_order_uc[::-1]
+    if n_unit_cells < 1 or type(n_unit_cells) != int:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
 
-    if structure_type == 'A1':
+    # Taking 3 unit cells of 3-layer unit cell as an example
+    # Firstly, we place an 'ABC' stacking as a substrate.
+    
+    spacings = [
+        (layers_dict[label]['z'] - layers_dict[prev_label]['z'])*z_norm
+        for label, prev_label in zip(stacking_order_uc[1:], stacking_order_uc[:-1])
+        ]
+    if print_info:
+        print(spacings)
+    # Then we calculate the z coordinate of 3 stacked unit cells.
+    # (ABC)ABCABCABC
+    zs = [
+        (value['z'] + layer) * z_norm
+        for layer in range(n_unit_cells) 
+        for value in layers_dict.values()
+        ]
 
+    # And we calculate the spacing of (ABC)CBACBACBA and reverse it.
+    # We calculate the spacing between the layers. 
+    # Note that the first spacing just link the substrate to the reversed layers.
+    # It's convenient then we remove one C layer.
+    # We pop the last spacing between B and A because 
+    # it will be calculated later when we do normal stacking.
+    spacings += [
+        z - prev_z
+        for z, prev_z in zip(zs[1:], zs[:-1])
+        ][::-1]
+    
+    spacings.pop()
+    if print_info:
+        print(spacings)
+    # Here we do the stacking of the rest (n_unit_cells-1) unit cells.
+    # Because we already have one substrate unit cell.
+    # (ABC)(BACBACBA)(BCABC)
+    zs = [
+        (value['z'] + layer + n_unit_cells+1) * z_norm
+        for layer in range(n_unit_cells-1) 
+        for value in layers_dict.values()
+        ]
+
+    spacings += [
+        z - prev_z
+        for z, prev_z in zip(zs[1:], zs[:-1])
+        ]
+    if print_info:
+        print(spacings)
+    # spacings += [(layers_dict[stacking_order_uc[0]]['z']+1.0 - layers_dict[stacking_order_uc[-1]]['z']) / n_layers/2]
+    
+    zs = [0.0] + list(itertools.accumulate(spacings))
+    if print_info:
+        print(zs)
+
+
+    faulted_stacking = stacking_order_uc[:-1] + stacking_order_uc_r * n_unit_cells + (stacking_order_uc * (n_unit_cells-1))[1:]
+    if print_info:
+        print(faulted_stacking)
+    z_dialation = len(stacking_order) / len(layers_dict)
+    new_cell = ase_atoms_uc.cell.array.copy()
+    new_cell[-1] *= z_dialation
+    atoms.set_cell(new_cell)
+    for layer_label, z in zip(faulted_stacking, zs):
+        for atom in layers_dict[layer_label]['atoms']:
+            atom.scaled_position[-1] = z
+            atoms.append(atom)
+
+    return atoms
+
+def get_strukturbericht(atoms_to_check, print_info = False):
+    import pymatgen.core as mg
+    from pymatgen.analysis.structure_matcher import StructureMatcher
+    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+    from pymatgen.io.ase import AseAtomsAdaptor
+    # This dictionary holds the names of common prototypes and their
+    # corresponding Material IDs (mp-id) in the Materials Project database.
+    # sga = SpacegroupAnalyzer(read_structure_from_file('AsTe').get_pymatgen())
+
+    # 1. Load your local crystal structure from a file (e.g., a CIF or POSCAR)
+    # For this example, let's create a simple NaCl structure in memory.
+    # In your real code, you would use: struct_to_check = mg.Structure.from_file("your_file.cif")
+
+    PROTOTYPES = {
+        "A1": read_structure_from_file('Al').get_pymatgen(),          # Copper (Cu)
+        'A2': read_structure_from_file('V').get_pymatgen(),      # Vandadium (V)
+        "B1": read_structure_from_file('AsTe').get_pymatgen(),   # Arsenic Telluride (AsTe)
+        "A15": read_structure_from_file('Nb3Sn').get_pymatgen(),        # Nb3Sn (Nb3Sn)
+        "C1_b": read_structure_from_file('NbCoSb').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Gold-Copper (AuCu3)
+    }
+    struct_to_check = AseAtomsAdaptor.get_structure(atoms_to_check)
+    
+    try:
+        # 2. Initialize the StructureMatcher.
+        # primitive_cell=True is crucial because it compares the fundamental building block
+        # of the crystal, ignoring differences in conventional vs. primitive cell choices.
+        matcher = StructureMatcher(primitive_cell=True, scale=True)
+
+        # 3. Fetch prototypes from Materials Project and compare
+        found_match = False
+        if print_info:
+            print("Comparing your structure against the database...")
+        for name, prototype_struct in PROTOTYPES.items():
+            # Fetch the standard prototype structure
+            # prototype_struct = mpr.get_structure_by_material_id(mp_id)
+            
+            # Use the .fit() method to see if they match
+            if matcher.fit_anonymous(struct_to_check, prototype_struct):
+                print(f"✅ Your structure is of the {name} type.")
+                found_match = True
+                return name
+
+        if not found_match:
+            print("\n❌ No match found in the provided list of prototypes.")
+            return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        print("Please ensure you have a valid structure file or an API key for the Materials Project.")
+        return None
+
+def get_unstable_faulted_structure(
+        ase_atoms_uc,
+        gliding_plane=None,
+        P = None,
+        n_unit_cells = 3,
+        burger_vector = None,
+        vacuum_ratio = 0,
+        print_info = False,
+    ):
+
+    strukturbericht = get_strukturbericht(ase_atoms_uc)
+    if not strukturbericht:
+        raise ValueError('No match found in the provided list of prototypes.')
+        
+    if strukturbericht == 'A1':
+        if print_info:
+            print('Strukturbericht A1 detected')
+        if not gliding_plane:
+            gliding_plane = '111'
+        if not P:
+            P = _DEFAULT_P[strukturbericht][gliding_plane]
+
+        ase_atoms_t = make_supercell(ase_atoms_uc, P)
+        layers_dict = group_by_layers(ase_atoms_t)
         if len(layers_dict) != 3:
             raise ValueError(
                 f'We found {len(layers_dict)} layers.'
                 'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
 
-        stacking_order = n_layers * 'ABC'
-        stacking_order_r = n_layers * 'CBA'
-
+        structures = AttributeDict({
+            'unfaulted': ase_atoms_t,
         # ...ABC*(A)BCABC...
-        stacking_order_isf = stacking_order[:3] + stacking_order[4:]
+            'intrinsic': build_atoms_from_stacking_removal(
+            ase_atoms_t, n_unit_cells, [3], layers_dict, print_info = print_info,
+            ),
         # ...ABC*(A)B(C)ABC...
-        stacking_order_esf  = stacking_order[:3] + stacking_order[4] + stacking_order[6:]
-        # ...ABC*ACBA
-        stacking_order_tf  = stacking_order + stacking_order_r[1:-1] + stacking_order
-
-        default_faulted = AttributeDict({
-            'intrinsic': build_atoms_from_stacking(
-            ase_atoms_uc, stacking_order_isf, zs, layers_dict
+            'extrinsic': build_atoms_from_stacking_removal(
+            ase_atoms_t, n_unit_cells, [3, 5], layers_dict, print_info = print_info,
             ),
-            'extrinsic': build_atoms_from_stacking(
-            ase_atoms_uc, stacking_order_esf, zs, layers_dict
-            ),
-            'twinning': build_atoms_from_stacking(
-            ase_atoms_uc, stacking_order_tf, zs, layers_dict
+        # ...ABC*BACBA*BCABC
+            'twinning': build_atoms_from_stacking_mirror(
+            ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
             ),
         })
 
-    return default_faulted
+    return structures
 
 def get_unstable_faulted_structure_and_kpoints_old(
         structure_uc: orm.StructureData,
