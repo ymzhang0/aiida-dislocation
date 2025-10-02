@@ -8,8 +8,8 @@ from ase.formula import Formula
 class USFEWorkChain(SFEBaseWorkChain):
     """ISFE WorkChain"""
 
-    _NAMESPACE = 'isfe'
-    _PW_SFE_NAMESPACE = "pw_isfe"
+    _NAMESPACE = 'usfe'
+    _PW_SFE_NAMESPACE = "pw_usfe"
 
     @classmethod
     def define(cls, spec):
@@ -74,9 +74,7 @@ class USFEWorkChain(SFEBaseWorkChain):
         inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
-        # inputs.kpoints_distance = self.inputs.kpoints_distance
         inputs.kpoints = self.ctx.kpoints_sfe
-
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for unstable stacking fault.')

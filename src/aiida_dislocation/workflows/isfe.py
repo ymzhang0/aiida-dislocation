@@ -74,9 +74,7 @@ class ISFEWorkChain(SFEBaseWorkChain):
         inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
-        # inputs.kpoints_distance = self.inputs.kpoints_distance
         inputs.kpoints = self.ctx.kpoints_sfe
-
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for intrinsic stacking fault.')

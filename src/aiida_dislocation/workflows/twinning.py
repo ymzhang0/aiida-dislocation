@@ -74,9 +74,7 @@ class TwinningWorkChain(SFEBaseWorkChain):
         inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
-        # inputs.kpoints_distance = self.inputs.kpoints_distance
         inputs.kpoints = self.ctx.kpoints_sfe
-
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for twinning stacking fault.')
@@ -90,7 +88,7 @@ class TwinningWorkChain(SFEBaseWorkChain):
             self.report(
                 f"PwBaseWorkChain<{workchain.pk}> for twinning faulted geometry failed with exit status {workchain.exit_status}"
             )
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_ISF
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_TWINNING
 
         self.report(
             f'PwBaseWorkChain<{workchain.pk}> for twinning faulted geometry finished OK'

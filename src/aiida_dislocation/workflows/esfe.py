@@ -7,7 +7,8 @@ from ase.formula import Formula
 
 class ESFEWorkChain(SFEBaseWorkChain):
     """ESFE WorkChain"""
-
+    
+    _NAMESPACE = 'esfe'
     _PW_SFE_NAMESPACE = "pw_esfe"
 
     @classmethod

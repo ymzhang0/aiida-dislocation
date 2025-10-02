@@ -1,3 +1,4 @@
+from os import uname
 from tkinter.constants import NONE
 from aiida import orm
 from math import sqrt, acos, pi, ceil
@@ -46,9 +47,9 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 2,
-            'intrinsic_removal': [2],
+            'intrinsic_removal': None,
             'extrinsic_removal': None,
-            'unstable_removal': None,
+            'unstable_removal': [2],
         },
         '111':{
             'transformation_matrix': [
@@ -64,6 +65,7 @@ _GLIDING_SYSTEMS = {
             'n_layers': 3,
             'intrinsic_removal': [3],
             'extrinsic_removal': [3, 5],
+            'unstable_removal': [3, 4],
         }
     },
     'A2': {
@@ -81,21 +83,23 @@ _GLIDING_SYSTEMS = {
             'n_layers': 2,
             'intrinsic_removal': [2],
             'extrinsic_removal': None,
+            'unstable_removal': [2],
         },
         '111':{
             'transformation_matrix': [
                 [-1, 1, 0],
                 [-1, 0, 1],
-                [2, 2, 2]
+                [1, 1, 1]
         ],
             'transformation_matrix_c': [
                 [-2, 1, 1],
                 [0, -1, 1],
                 [2, 2, 2]
         ],
-            'n_layers': 6,
-            'intrinsic_removal': [6, 7],
-            'extrinsic_removal': [6, 7, 10, 11],
+            'n_layers': 3,
+            'intrinsic_removal': [3],
+            'extrinsic_removal': [3, 5],
+            'unstable_removal': [3, 4],
         },
     },
     'B1': {
@@ -106,8 +110,9 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 2,
-            'intrinsic_removal': [2],
+            'intrinsic_removal': None,
             'extrinsic_removal': None,
+            'unstable_removal': [2],
         },
         '111':{
             'transformation_matrix': [
@@ -123,6 +128,7 @@ _GLIDING_SYSTEMS = {
             'n_layers': 6,
             'intrinsic_removal': [3],
             'extrinsic_removal': [3, 5],
+            'unstable_removal': [3, 4],
         }
     },
     'C1_b':{
@@ -133,7 +139,8 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 6,
-            'intrinsic_removal': [2],
+            'intrinsic_removal': None,
+            'unstable_removal': [2],
             'extrinsic_removal': None,
         },
         '111':{
@@ -148,7 +155,8 @@ _GLIDING_SYSTEMS = {
                 [1, 1, 1]
             ],
             'n_layers': 9,
-            'intrinsic_removal': [3],
+            'intrinsic_removal': None,
+            'unstable_removal': [3, 4],
             'extrinsic_removal': [3, 5],
         }
     },
@@ -628,15 +636,15 @@ def get_unstable_faulted_structure(
     # ...ABC*(A)BCABC...
         'intrinsic': build_atoms_from_stacking_removal(
         ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
-        ),
+        ) if 'intrinsic_removal' in gliding_system else NONE,
     # ...ABC*(A)B(C)ABC...
         'extrinsic': build_atoms_from_stacking_removal(
         ase_atoms_t, n_unit_cells, gliding_system['extrinsic_removal'], layers_dict, print_info = print_info,
-        ) if 'extrinsic' in gliding_system else NONE,
+        ) if 'extrinsic_removal' in gliding_system else NONE,
     # ...ABC*BACBA*BCABC
         'unstable': build_atoms_from_stacking_removal(
         ase_atoms_t, n_unit_cells, gliding_system['unstable_removal'], layers_dict, print_info = print_info,
-        ) if 'unstable' in gliding_system else NONE,
+        ) if 'unstable_removal' in gliding_system else NONE,
         'twinning': build_atoms_from_stacking_mirror(
         ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
         ) if gliding_system.get('n_layers') > 2 else NONE,
@@ -645,46 +653,6 @@ def get_unstable_faulted_structure(
         ),
     })
 
-    # if strukturbericht == 'A2':
-    #     if print_info:
-    #         print('Strukturbericht A2 detected')
-    #     if not gliding_plane:
-    #         gliding_plane = '111'
-    #     if not P:
-    #         P = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]['transformation_matrix']
-    #     n_layers = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]['n_layers']
-    #     ase_atoms_t = make_supercell(ase_atoms_uc, P)
-    #     layers_dict = group_by_layers(ase_atoms_t)
-    #     if len(layers_dict) != n_layers:
-    #         raise ValueError(
-    #             f'We found {len(layers_dict)} layers.'
-    #             'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
-    #     gliding_system = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]
-
-    #     structures = AttributeDict(
-    #         {
-    #             'unfaulted': ase_atoms_t,
-    #         # ...ABCDEF*(AB)CDEF...
-    #             'intrinsic': build_atoms_from_stacking_removal(
-    #             ase_atoms_t, n_unit_cells, 
-    #             gliding_system['intrinsic_removal'], 
-    #             layers_dict, print_info = print_info,
-    #             ),
-    #         # ...ABCDEF*(AB)CD(EF)...
-    #             'extrinsic': build_atoms_from_stacking_removal(
-    #             ase_atoms_t, n_unit_cells, 
-    #             gliding_system['extrinsic_removal'], 
-    #             layers_dict, print_info = print_info,
-    #             ) if 'extrinsic' in gliding_system else NONE,
-    #         # ...ABCDEF*EDCAB*ABCDEF
-    #             'twinning': build_atoms_from_stacking_mirror(
-    #             ase_atoms_t, n_unitcf_cells, layers_dict, print_info = print_info,
-    #             ) if n_layers > 2 else None,
-    #             'cleavaged': build_atoms_surface(
-    #             ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
-    #             ),
-    #         }
-    #     )
     return (strukturbericht, structures)
 
 def get_unstable_faulted_structure_and_kpoints_old(
