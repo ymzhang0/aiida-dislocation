@@ -8,6 +8,9 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
+from ..tools import get_unstable_faulted_structure, is_primitive_cell
+from aiida_quantumespresso.utils.mapping import prepare_process_inputs
+from ase.formula import Formula
 
 class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     """SFEBase WorkChain"""
@@ -26,13 +29,12 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     def define(cls, spec):
         super().define(spec)
 
-        spec.input('n_unit_cells', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
+        spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
                 help='The number of layers in the supercell')
-        spec.input('P', valid_type=orm.List, required=False,
+        spec.input('transformation_matrix', valid_type=orm.List, required=False,
                 help='The transformation matrix for the supercell. Note that please always put the z axis at the last.')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
-        spec.input('kpoints', valid_type=orm.KpointsData, required=False,)
-        spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.5),
+        spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
                 help='The distance between kpoints for the kpoints generation')
         spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
                     help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
@@ -43,8 +45,6 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             exclude=(
                 'structure',
                 'clean_workdir',
-                # 'kpoints',
-                # 'kpoints_distance'
             ),
             namespace_options={
                 'required': False,
@@ -57,10 +57,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             PwBaseWorkChain,
             namespace=cls._PW_SCF_NAMESPACE,
             exclude=(
-                'structure',
+                'pw.structure',
                 'clean_workdir',
-                # 'kpoints',
-                # 'kpoints_distance'
+                'kpoints',
+                'kpoints_distance'
             ),
             namespace_options={
                 'required': False,
@@ -73,12 +73,14 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             PwBaseWorkChain,
             namespace=cls._PW_SFE_NAMESPACE,
             exclude=(
-                'structure',
+                'pw.structure',
                 'clean_workdir',
-                # 'kpoints',
-                # 'kpoints_distance'
+                'kpoints',
+                'kpoints_distance'
             ),
             namespace_options={
+                'required': False,
+                'populate_defaults': False,
                 'help': 'Inputs for the `PwBaseWorkChain`.'
             }
         )
@@ -87,10 +89,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             PwBaseWorkChain,
             namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
             exclude=(
-                'structure',
+                'pw.structure',
                 'clean_workdir',
-                # 'kpoints',
-                # 'kpoints_distance'
+                'kpoints',
+                'kpoints_distance'
             ),
             namespace_options={
                 'required': False,
@@ -111,8 +113,11 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            cls.run_sfe,
-            cls.inspect_sfe,
+            cls.setup_supercell_kpoints,
+            if_(cls.should_run_sfe)(
+                cls.run_sfe,
+                cls.inspect_sfe,
+            ),
             if_(cls.should_run_surface_energy)(
                 cls.run_surface_energy,
                 cls.inspect_surface_energy,
@@ -162,7 +167,11 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             "ERROR_SUB_PROCESS_FAILED_SCF",
             message='The `PwBaseWorkChain` for the scf run failed.',
         )
-
+        spec.exit_code(
+            403,
+            "ERROR_NO_STRUCTURE_TYPE_DETECTED",
+            message='The structure type can not be detected.',
+        )
         spec.exit_code(
             404,
             "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
@@ -217,10 +226,17 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             sub_builder.pop('structure', None)
             sub_builder.pop('clean_workdir', None)
 
+            if namespace != cls._PW_RELAX_NAMESPACE:
+                sub_builder.pop('kpoints', None)
+                sub_builder.pop('kpoints_distance', None)
+
             builder[namespace]._data = sub_builder._data
 
         builder[cls._PW_RELAX_NAMESPACE].pop('base_final_scf', None)
+        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints', None)
+        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         builder.structure = structure
+        builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
 
         return builder
@@ -243,6 +259,8 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         inputs.metadata.call_link_label = self._PW_RELAX_NAMESPACE
 
         inputs.structure = self.ctx.current_structure
+        inputs.base.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base.pop('kpoints')
 
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} unit cell geometry.')
@@ -254,11 +272,11 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         if not workchain.is_finished_ok:
             self.report(
-                f"relax {workchain.process_label} failed with exit status {workchain.exit_status}"
+                f"PwRelaxWorkChain<{workchain.pk}> for {self.inputs.structure.get_formula()} unit cell geometry failed with exit status {workchain.exit_status}"
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_RELAX
 
-        self.report(f'relax calculation<{workchain.pk}> finished')
+        self.report(f'PwRelaxWorkChain<{workchain.pk}> for {self.inputs.structure.get_formula()} unit cell geometry finished OK')
 
         self.ctx.current_structure = workchain.outputs.output_structure
         self.out_many(
@@ -269,25 +287,45 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             ),
         )
         self.ctx.total_energy_unit_cell = workchain.outputs.output_parameters.get('energy')
+        self.report(f"Totel energy of unit cell after relaxation: {self.ctx.total_energy_unit_cell / self._RY2eV} Ry")
+    
+    def generate_faulted_structure(self):
+        strukturbericht, structures = get_unstable_faulted_structure(
+            self.ctx.current_structure.get_ase(),
+            n_unit_cells=self.inputs.n_repeats.value,
+            )
+        if strukturbericht:
+            self.report(f'{strukturbericht} structure is detected for ISFE calculation.')
+        else:
+            self.report(f'Strukturbericht can not be detected for ISFE calculation.')
+            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
+
+        self.ctx.structures = structures
+
+        from numpy import cross
+        from numpy.linalg import norm
+        cell = self.ctx.structures.unfaulted.cell
+        self.ctx.surface_area = norm(cross(cell[0], cell[1]))
+        
+        self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
+        
+        unit_cell_formula = Formula(self.ctx.current_structure.get_ase().get_chemical_formula())
+        _, unit_cell_multiplier = unit_cell_formula.reduce()
+        
+        self.ctx.unit_cell_multiplier = unit_cell_multiplier
+        
+        unfaulted_formula = Formula(structures.unfaulted.get_chemical_formula())
+        _, unfaulted_multiplier = unfaulted_formula.reduce()
+        
+        self.ctx.unfaulted_multiplier = unfaulted_multiplier
+
+        surface_formula = Formula(self.ctx.structures.cleavaged.get_chemical_formula())
+        _, surface_multiplier = surface_formula.reduce()
+        
+        self.ctx.surface_multiplier = surface_multiplier
 
     def should_run_scf(self):
-        # if self._PW_SCF_NAMESPACE in self.inputs:
-        #     if self._PW_RELAX_NAMESPACE in self.inputs:
-        #         self.report(
-        #             "You are running relaxation calculation in unit cell. "
-        #             "single scf will be skipped althought it is provided!"
-        #         )
-        #         return False
-        #     else:
-        #         self.report(
-        #         "You are running single scf calculation in unit cell. "
-        #     )
-        #         return True
-        # else:
-        #     self.report(
-        #         "We skip the calculation of scf calculation in unit cell. "
-        #     )
-        #     return False
+
         return self._PW_SCF_NAMESPACE in self.inputs
     
     def run_scf(self):
@@ -300,17 +338,20 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         inputs.metadata.call_link_label = self._PW_SCF_NAMESPACE
 
-        inputs.pw.structure = self.ctx.structure_scf
-        # inputs.kpoints = self.ctx.kpoint_scf
+        inputs.pw.structure = orm.StructureData(
+            ase=self.ctx.structures.unfaulted
+            )
+
+        inputs.kpoints_distance = self.inputs.kpoints_distance
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} conventional geometry.')
 
-        self.to_context(workchain_scf_uc = running)
+        self.to_context(workchain_scf = running)
 
     def inspect_scf(self):
         """Verify that the `PwBaseWorkChain` for the scf run successfully finished."""
-        workchain = self.ctx.workchain_scf_uc
+        workchain = self.ctx.workchain_scf
 
         if not workchain.is_finished_ok:
             self.report(
@@ -318,9 +359,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF
 
-        self.report(f"Totel energy of unit cell: {workchain.outputs.output_parameters.get('energy') / self._RY2eV} Ry")
-
-        self.report(f'SCF calculation<{self.ctx.workchain_scf_uc.pk}> finished')
+        self.report(f'PwBaseWorkChain<{self.ctx.workchain_scf.pk}> for conventional structure finished OK')
         self.out_many(
             self.exposed_outputs(
                 workchain,
@@ -328,34 +367,23 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 namespace=self._PW_SCF_NAMESPACE,
             ),
         )
+        self.ctx.kpoints_scf = workchain.base.links.get_outgoing(
+            link_label_filter='create_kpoints_from_distance'
+            ).first().node.outputs.result
+
         self.ctx.total_energy_conventional_geometry = workchain.outputs.output_parameters.get('energy')
+        self.report(f"Totel energy of conventional cell [{self.ctx.unfaulted_multiplier} unit cells]: {self.ctx.total_energy_conventional_geometry / self._RY2eV} Ry")
 
-    def inspect_sfe(self):
-        workchain = self.ctx.workchain_scf_faulted_geometry
+        if 'total_energy_unit_cell' in self.ctx:
+            energy_difference = self.ctx.total_energy_conventional_geometry - self.ctx.total_energy_unit_cell / self.ctx.unit_cell_multiplier * self.ctx.unfaulted_multiplier
+            self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
 
-        if not workchain.is_finished_ok:
-            self.report(
-                f"USF {workchain.process_label} failed with exit status {workchain.exit_status}"
-            )
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
-
-        self.report(
-            f'SCF calculation<{workchain.pk}> for USF geometry finished'
-            )
-        self.out_many(
-            self.exposed_outputs(
-                workchain,
-                PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE,
-            ),
-        )
-        # self.ctx.total_energy_faulted_geometry = workchain.outputs.output_parameters.get('energy')
-        # energy_difference = self.ctx.total_energy_faulted_geometry - self.ctx.total_energy_unit_cell * self.ctx.multiplicity
-        # USF = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2 / 2
-        # self.ctx.USF = USF
-        # self.report(f'Unstable faulted surface energy: {USF.value} J/m^2')
-
-
+    def should_run_sfe(self):
+        return self._PW_SFE_NAMESPACE in self.inputs
+    
+    def setup_sfe(self):
+        pass
+    
     def should_run_surface_energy(self):
         if self._PW_SURFACE_ENERGY_NAMESPACE in self.inputs:
             self.report(
@@ -377,8 +405,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             )
         inputs.metadata.call_link_label = self._PW_SURFACE_ENERGY_NAMESPACE
 
-        inputs.pw.structure = self.ctx.structure_cl
-        # inputs.kpoints = self.ctx.kpoints_cl
+        inputs.pw.structure = orm.StructureData(
+            ase=self.ctx.structures.cleavaged
+            )
+        inputs.kpoints = self.ctx.kpoints_surface_energy
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
@@ -391,9 +421,12 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         if not workchain.is_finished_ok:
             self.report(
-                f"surface energy {workchain.process_label} failed with exit status {workchain.exit_status}"
+                f"PwBaseWorkChain<{workchain.pk}> for surface energy calculation failed with exit status {workchain.exit_status}"
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
+        
+        self.report(f'PwBaseWorkChain<{workchain.pk}> for surface energy calculation finished OK')
+
         self.out_many(
             self.exposed_outputs(
                 workchain,
@@ -401,13 +434,18 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 namespace=self._PW_SURFACE_ENERGY_NAMESPACE,
             ),
         )
+
         total_energy_slab = workchain.outputs.output_parameters.get('energy')
-        self.report(f'Total energy of the cleaved geometry: {total_energy_slab} eV')
-        SE = ( self.ctx.total_energy_unit_cell * self.ctx.multiplicity_cl - total_energy_slab ) * 2 / self.ctx.surface_area * self._eVA22Jm2
-        self.report(f'Surface energy: {SE.value} J/m^2')
-        self.ctx.SE = SE
-        Rice_ratio = self.ctx.USF / SE
-        self.report(f'Rice ratio: {Rice_ratio.value}')
+        self.report(f'Total energy of the cleaved geometry [{self.ctx.surface_multiplier} unit cells]: {total_energy_slab / self._RY2eV} Ry')
+        # SE = ( self.ctx.total_energy_unit_cell * self.ctx.multiplicity_cl - total_energy_slab ) * 2 / self.ctx.surface_area * self._eVA22Jm2
+        # self.report(f'Surface energy: {SE.value} J/m^2')
+        # self.ctx.SE = SE
+        # Rice_ratio = self.ctx.USF / SE
+        # self.report(f'Rice ratio: {Rice_ratio.value}')
+        if 'total_energy_conventional_geometry' in self.ctx:
+            energy_difference = total_energy_slab - self.ctx.total_energy_conventional_geometry / self.ctx.unfaulted_multiplier * self.ctx.surface_multiplier
+            surface_energy = energy_difference / 2 / self.ctx.surface_area * self._eVA22Jm2
+            self.report(f'Surface energy evaluated from conventional and unit cell: {surface_energy} J/m^2')
 
     def results(self):
         pass

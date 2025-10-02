@@ -32,14 +32,148 @@ class AttributeDict(dict):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 # logger = logging.getLogger('aiida.workflow.dislocation')
-_DEFAULT_P = {
+_GLIDING_SYSTEMS = {
     'A1': {
-        '111':[
-            [1, -1, 0],
-            [1, 1, -2],
-            [1, 1, 1]
-        ]
+        '011':{
+            'transformation_matrix': [
+                [0, 1, -1],
+                [-1, 1, 1],
+                [1, 0, 0]
+            ],
+            'transformation_matrix_c': [
+                [0, 1, -1],
+                [-1, 1, 1],
+                [1, 0, 0]
+            ],
+            'n_layers': 2,
+            'intrinsic_removal': [2],
+            'extrinsic_removal': None,
+            'unstable_removal': None,
         },
+        '111':{
+            'transformation_matrix': [
+                [1, -1, 0],
+                [1, 0, -1],
+                [1, 1, 1]
+            ],
+            'transformation_matrix_c': [
+                [1, -1, 0],
+                [1, 1, -2],
+                [1, 1, 1]
+            ],
+            'n_layers': 3,
+            'intrinsic_removal': [3],
+            'extrinsic_removal': [3, 5],
+        }
+    },
+    'A2': {
+        '011':{
+            'transformation_matrix': [
+                [0, 1, 0],
+                [0, 0, 1],
+                [2, 1, 1]
+            ],
+            'transformation_matrix_c': [
+                [0, 1, -1],
+                [0, 1, 1],
+                [2, 1, 1]
+            ],
+            'n_layers': 2,
+            'intrinsic_removal': [2],
+            'extrinsic_removal': None,
+        },
+        '111':{
+            'transformation_matrix': [
+                [-1, 1, 0],
+                [-1, 0, 1],
+                [2, 2, 2]
+        ],
+            'transformation_matrix_c': [
+                [-2, 1, 1],
+                [0, -1, 1],
+                [2, 2, 2]
+        ],
+            'n_layers': 6,
+            'intrinsic_removal': [6, 7],
+            'extrinsic_removal': [6, 7, 10, 11],
+        },
+    },
+    'B1': {
+        '011':{
+            'transformation_matrix': [
+                [0, 1, -1],
+                [-1, 1, 1],
+                [1, 0, 0]
+            ],
+            'n_layers': 2,
+            'intrinsic_removal': [2],
+            'extrinsic_removal': None,
+        },
+        '111':{
+            'transformation_matrix': [
+                [1, -1, 0],
+                [1, 0, -1],
+                [1, 1, 1]
+            ],
+            'transformation_matrix_c': [
+                [1, -1, 0],
+                [1, 1, -2],
+                [1, 1, 1]
+            ],
+            'n_layers': 6,
+            'intrinsic_removal': [3],
+            'extrinsic_removal': [3, 5],
+        }
+    },
+    'C1_b':{
+        '011':{
+            'transformation_matrix': [
+                [0, 1, -1],
+                [-1, 1, 1],
+                [1, 0, 0]
+            ],
+            'n_layers': 6,
+            'intrinsic_removal': [2],
+            'extrinsic_removal': None,
+        },
+        '111':{
+            'transformation_matrix': [
+                [1, -1, 0],
+                [1, 0, -1],
+                [1, 1, 1]
+            ],
+            'transformation_matrix_c': [
+                [1, -1, 0],
+                [1, 1, -2],
+                [1, 1, 1]
+            ],
+            'n_layers': 9,
+            'intrinsic_removal': [3],
+            'extrinsic_removal': [3, 5],
+        }
+    },
+    'E_21':{
+        '011':{
+            'transformation_matrix': [
+                [1, 1, 0],
+                [-1, 1, 0],
+                [0, 0, 2]
+            ],
+            'n_layers': 4,
+            'intrinsic_removal': [2],
+            'extrinsic_removal': None,
+        },
+        '111':{
+            'transformation_matrix': [
+                [1, -1, 0],
+                [1, 0, -1],
+                [1, 1, 1]
+            ],
+            'n_layers': 6,
+            'intrinsic_removal': [6, 7],
+            'extrinsic_removal': [6, 7, 10, 11],
+        }
+    }
 }
 
 _IMPLEMENTED_SLIPPING_SYSTEMS = {
@@ -179,7 +313,10 @@ def read_structure_from_file(
         'TaRu3C',
         'Nb3Sn',
         'AsTe',
-        'NbCoSb'
+        'NbCoSb',
+        'MoN',
+        'MgB2',
+        'TaSe2'
         ]:
         import importlib.resources
         data_path = importlib.resources.files('aiida_dislocation.data')
@@ -218,7 +355,7 @@ def group_by_layers(
     scaled_positions = ase_atoms.get_scaled_positions()
 
     z_coords = scaled_positions[:, 2]
-    rounded_z = numpy.round(z_coords, decimals=decimals)
+    rounded_z = numpy.round(z_coords, decimals=decimals) % 1.0
 
     sorted_unique_z = sorted(numpy.unique(rounded_z))
 
@@ -242,15 +379,34 @@ def group_by_layers(
 
 def build_atoms_surface(
     ase_atoms_uc,
-    n_layers,
+    n_unit_cells,
     layers_dict,
+    print_info = False,
     ):
     atoms = Atoms()
+
+    if n_unit_cells < 1 or type(n_unit_cells) != int:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+    
+    stacking_order = n_unit_cells * ''.join(layers_dict.keys())
+
+    zs = [(value['z'] + cell)/n_unit_cells/2 for cell in range(n_unit_cells) for value in layers_dict.values()]
+
+    new_cell = ase_atoms_uc.cell.array.copy()
+    new_cell[-1] *= 2 * n_unit_cells
+    atoms.set_cell(new_cell)
+    for layer_label, z in zip(stacking_order, zs):
+        for atom in layers_dict[layer_label]['atoms']:
+            scaled_position = atom.scaled_position
+            scaled_position[-1] = z
+            atom.position = scaled_position @ new_cell
+            atoms.append(atom)
+            
     return atoms
     
 def build_atoms_from_stacking_removal(
     ase_atoms_uc,
-    n_layers,
+    n_unit_cells,
     removed_layers,
     layers_dict,
     print_info = False,
@@ -258,11 +414,13 @@ def build_atoms_from_stacking_removal(
 
     atoms = Atoms()
     
-    stacking_order = n_layers * ''.join(layers_dict.keys())
+    stacking_order = n_unit_cells * ''.join(layers_dict.keys())
+    if n_unit_cells < 1 or type(n_unit_cells) != int:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
     if any(layer > len(stacking_order) for layer in removed_layers):
         raise ValueError(f"Removed layers {removed_layers} is greater than the number of layers {len(layers_dict)}")
 
-    zs = [value['z']/n_layers + layer/n_layers for layer in range(n_layers) for value in layers_dict.values()]
+    zs = [value['z']/n_unit_cells + layer/n_unit_cells for layer in range(n_unit_cells) for value in layers_dict.values()]
 
     removed_spacing = 0.0
     faulted_stacking = "".join([char for i, char in enumerate(stacking_order) if i not in removed_layers])
@@ -277,9 +435,11 @@ def build_atoms_from_stacking_removal(
         zs.pop()
 
     zs = [z / (1-removed_spacing) for z in zs]
-
+    if print_info:
+        print(zs)
+        print(faulted_stacking)
     new_cell = ase_atoms_uc.cell.array.copy()
-    new_cell[-1] *= (1-removed_spacing) * n_layers
+    new_cell[-1] *= (1-removed_spacing) * n_unit_cells
     atoms.set_cell(new_cell)
     for layer_label, z in zip(faulted_stacking, zs):
         for atom in layers_dict[layer_label]['atoms']:
@@ -374,7 +534,10 @@ def build_atoms_from_stacking_mirror(
 
     return atoms
 
-def get_strukturbericht(atoms_to_check, print_info = False):
+def get_strukturbericht(
+    atoms_to_check,
+    print_info = False,
+    ):
     import pymatgen.core as mg
     from pymatgen.analysis.structure_matcher import StructureMatcher
     from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
@@ -391,8 +554,11 @@ def get_strukturbericht(atoms_to_check, print_info = False):
         "A1": read_structure_from_file('Al').get_pymatgen(),          # Copper (Cu)
         'A2': read_structure_from_file('V').get_pymatgen(),      # Vandadium (V)
         "B1": read_structure_from_file('AsTe').get_pymatgen(),   # Arsenic Telluride (AsTe)
+        "B_h": read_structure_from_file('MoN').get_pymatgen(),   # Arsenic Telluride (AsTe)
         "A15": read_structure_from_file('Nb3Sn').get_pymatgen(),        # Nb3Sn (Nb3Sn)
         "C1_b": read_structure_from_file('NbCoSb').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "C_7": read_structure_from_file('TaSe2').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "C_32": read_structure_from_file('MgB2').get_pymatgen(),            # Gold-Copper (AuCu3)
         "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Gold-Copper (AuCu3)
     }
     struct_to_check = AseAtomsAdaptor.get_structure(atoms_to_check)
@@ -413,12 +579,14 @@ def get_strukturbericht(atoms_to_check, print_info = False):
             
             # Use the .fit() method to see if they match
             if matcher.fit_anonymous(struct_to_check, prototype_struct):
-                print(f"✅ Your structure is of the {name} type.")
+                if print_info:
+                    print(f"✅ Your structure<{atoms_to_check.get_chemical_formula()}> is of the {name} type.")
                 found_match = True
                 return name
 
         if not found_match:
-            print("\n❌ No match found in the provided list of prototypes.")
+            if print_info:
+                print(f"\n❌ No match found for structure<{atoms_to_check.get_chemical_formula()}> in the provided list of prototypes.")
             return None
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -439,38 +607,85 @@ def get_unstable_faulted_structure(
     if not strukturbericht:
         raise ValueError('No match found in the provided list of prototypes.')
         
-    if strukturbericht == 'A1':
-        if print_info:
-            print('Strukturbericht A1 detected')
-        if not gliding_plane:
-            gliding_plane = '111'
-        if not P:
-            P = _DEFAULT_P[strukturbericht][gliding_plane]
+    if print_info:
+        print(f'Strukturbericht {strukturbericht} detected')
+    if not gliding_plane:
+        gliding_plane = '111'
 
-        ase_atoms_t = make_supercell(ase_atoms_uc, P)
-        layers_dict = group_by_layers(ase_atoms_t)
-        if len(layers_dict) != 3:
-            raise ValueError(
-                f'We found {len(layers_dict)} layers.'
-                'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
+    gliding_system = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]
+    if not P:
+        P = gliding_system['transformation_matrix']
 
-        structures = AttributeDict({
-            'unfaulted': ase_atoms_t,
-        # ...ABC*(A)BCABC...
-            'intrinsic': build_atoms_from_stacking_removal(
-            ase_atoms_t, n_unit_cells, [3], layers_dict, print_info = print_info,
-            ),
-        # ...ABC*(A)B(C)ABC...
-            'extrinsic': build_atoms_from_stacking_removal(
-            ase_atoms_t, n_unit_cells, [3, 5], layers_dict, print_info = print_info,
-            ),
-        # ...ABC*BACBA*BCABC
-            'twinning': build_atoms_from_stacking_mirror(
-            ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
-            ),
-        })
+    ase_atoms_t = make_supercell(ase_atoms_uc, P)
+    layers_dict = group_by_layers(ase_atoms_t)
+    if len(layers_dict) != gliding_system.get('n_layers'):
+        raise ValueError(
+            f'We found {len(layers_dict)} layers.'
+            'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
 
-    return structures
+    structures = AttributeDict({
+        'unfaulted': ase_atoms_t,
+    # ...ABC*(A)BCABC...
+        'intrinsic': build_atoms_from_stacking_removal(
+        ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
+        ),
+    # ...ABC*(A)B(C)ABC...
+        'extrinsic': build_atoms_from_stacking_removal(
+        ase_atoms_t, n_unit_cells, gliding_system['extrinsic_removal'], layers_dict, print_info = print_info,
+        ) if 'extrinsic' in gliding_system else NONE,
+    # ...ABC*BACBA*BCABC
+        'unstable': build_atoms_from_stacking_removal(
+        ase_atoms_t, n_unit_cells, gliding_system['unstable_removal'], layers_dict, print_info = print_info,
+        ) if 'unstable' in gliding_system else NONE,
+        'twinning': build_atoms_from_stacking_mirror(
+        ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
+        ) if gliding_system.get('n_layers') > 2 else NONE,
+        'cleavaged': build_atoms_surface(
+        ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
+        ),
+    })
+
+    # if strukturbericht == 'A2':
+    #     if print_info:
+    #         print('Strukturbericht A2 detected')
+    #     if not gliding_plane:
+    #         gliding_plane = '111'
+    #     if not P:
+    #         P = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]['transformation_matrix']
+    #     n_layers = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]['n_layers']
+    #     ase_atoms_t = make_supercell(ase_atoms_uc, P)
+    #     layers_dict = group_by_layers(ase_atoms_t)
+    #     if len(layers_dict) != n_layers:
+    #         raise ValueError(
+    #             f'We found {len(layers_dict)} layers.'
+    #             'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
+    #     gliding_system = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]
+
+    #     structures = AttributeDict(
+    #         {
+    #             'unfaulted': ase_atoms_t,
+    #         # ...ABCDEF*(AB)CDEF...
+    #             'intrinsic': build_atoms_from_stacking_removal(
+    #             ase_atoms_t, n_unit_cells, 
+    #             gliding_system['intrinsic_removal'], 
+    #             layers_dict, print_info = print_info,
+    #             ),
+    #         # ...ABCDEF*(AB)CD(EF)...
+    #             'extrinsic': build_atoms_from_stacking_removal(
+    #             ase_atoms_t, n_unit_cells, 
+    #             gliding_system['extrinsic_removal'], 
+    #             layers_dict, print_info = print_info,
+    #             ) if 'extrinsic' in gliding_system else NONE,
+    #         # ...ABCDEF*EDCAB*ABCDEF
+    #             'twinning': build_atoms_from_stacking_mirror(
+    #             ase_atoms_t, n_unitcf_cells, layers_dict, print_info = print_info,
+    #             ) if n_layers > 2 else None,
+    #             'cleavaged': build_atoms_surface(
+    #             ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
+    #             ),
+    #         }
+    #     )
+    return (strukturbericht, structures)
 
 def get_unstable_faulted_structure_and_kpoints_old(
         structure_uc: orm.StructureData,

@@ -1,8 +1,9 @@
 from .structure import (
-    _DEFAULT_P,
+    _GLIDING_SYSTEMS,
     read_structure_from_file,
     check_bravais_lattice,
     group_by_layers,
+    get_strukturbericht,
     build_atoms_from_stacking_removal,
     build_atoms_from_stacking_mirror,
     get_unstable_faulted_structure,
@@ -26,14 +27,16 @@ from .cut import (
 )
 
 __all__ = (
-    '_DEFAULT_P',
+    '_GLIDING_SYSTEMS',
     'read_structure_from_file',
     'group_by_layers',
     'check_bravais_lattice',
     'get_unstable_faulted_structure',
+    'get_strukturbericht',
     'check_bravais_lattice',
     'build_atoms_from_stacking_removal',
     'build_atoms_from_stacking_mirror',
+    'build_atoms_surface',
     'is_primitive_cell',
     'get_elements_for_wyckoff_symbols',
     'get_kpoints_mesh_for_supercell',

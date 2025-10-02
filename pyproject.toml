@@ -76,6 +76,7 @@ tests = [
 
 [project.entry-points.'aiida.workflows']
 'dislocation.isfe' = 'aiida_dislocation.workflows.isfe:ISFEWorkChain'
+'dislocation.esfe' = 'aiida_dislocation.workflows.esfe:ESFEWorkChain'
 'dislocation.usfe' = 'aiida_dislocation.workflows.usfe:USFEWorkChain'
 'dislocation.twinning' = 'aiida_dislocation.workflows.twinning:TwinningWorkChain'
 
