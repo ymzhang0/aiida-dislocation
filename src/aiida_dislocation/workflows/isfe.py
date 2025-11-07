@@ -15,6 +15,14 @@ class ISFEWorkChain(SFEBaseWorkChain):
     def define(cls, spec):
         super().define(spec)
         
+        spec.expose_outputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_SFE_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        
         spec.exit_code(
             403,
             "ERROR_SUB_PROCESS_FAILED_ISF",
@@ -49,14 +57,16 @@ class ISFEWorkChain(SFEBaseWorkChain):
         
         kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
 
+        from math import ceil
+
         kpoints_sfe = orm.KpointsData()
         sfe_z_ratio = self.ctx.structures.intrinsic.cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
-        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [kpoints_scf_mesh[2] / sfe_z_ratio])
+        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / sfe_z_ratio)])
         
         kpoints_surface_energy = orm.KpointsData()
         surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
         kpoints_surface_energy.set_kpoints_mesh(
-            kpoints_scf_mesh[:2] + [kpoints_scf_mesh[2] / surface_energy_z_ratio])
+            kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
         
         self.ctx.kpoints_sfe = kpoints_sfe
         self.ctx.kpoints_surface_energy = kpoints_surface_energy

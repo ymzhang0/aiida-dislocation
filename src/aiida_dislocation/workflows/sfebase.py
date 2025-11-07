@@ -31,8 +31,8 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
                 help='The number of layers in the supercell')
-        spec.input('transformation_matrix', valid_type=orm.List, required=False,
-                help='The transformation matrix for the supercell. Note that please always put the z axis at the last.')
+        spec.input('gliding_plane', valid_type=orm.Str, required=False, default=lambda: orm.Str(),
+                help='The normal vector for the supercell. Note that please always put the z axis at the last.')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
         spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
                 help='The distance between kpoints for the kpoints generation')
@@ -102,19 +102,18 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         )
 
         spec.outline(
-            cls.setup,
-            # cls.generate_kpoints_for_unit_cell,
             if_(cls.should_run_relax)(
                 cls.run_relax,
                 cls.inspect_relax,
             ),
+            cls.setup,
             cls.generate_faulted_structure,
             if_(cls.should_run_scf)(
                 cls.run_scf,
                 cls.inspect_scf,
             ),
             cls.setup_supercell_kpoints,
-            if_(cls.should_run_sfe)(
+            while_(cls.should_run_sfe)(
                 cls.run_sfe,
                 cls.inspect_sfe,
             ),
@@ -141,13 +140,13 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             }
         )
 
-        spec.expose_outputs(
-            PwBaseWorkChain,
-            namespace=cls._PW_SFE_NAMESPACE,
-            namespace_options={
-                'required': False,
-            }
-        )
+        # spec.expose_outputs(
+        #     PwBaseWorkChain,
+        #     namespace=cls._PW_SFE_NAMESPACE,
+        #     namespace_options={
+        #         'required': False,
+        #     }
+        # )
 
         spec.expose_outputs(
             PwBaseWorkChain,
@@ -237,13 +236,11 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
+        builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
 
         return builder
 
-    def setup(self):
-        self.ctx.current_structure = self.inputs.structure
-        
     def should_run_relax(self):
         return self._PW_RELAX_NAMESPACE in self.inputs
     
@@ -258,9 +255,9 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         inputs.metadata.call_link_label = self._PW_RELAX_NAMESPACE
 
-        inputs.structure = self.ctx.current_structure
+        inputs.structure = self.inputs.structure
         inputs.base.kpoints_distance = self.inputs.kpoints_distance
-        inputs.base.pop('kpoints')
+        # inputs.base.pop('kpoints')
 
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} unit cell geometry.')
@@ -288,16 +285,22 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         )
         self.ctx.total_energy_unit_cell = workchain.outputs.output_parameters.get('energy')
         self.report(f"Totel energy of unit cell after relaxation: {self.ctx.total_energy_unit_cell / self._RY2eV} Ry")
-    
+
+    def setup(self):
+
+        if 'current_structure' not in self.ctx:
+            self.ctx.current_structure = self.inputs.structure
+        
     def generate_faulted_structure(self):
         strukturbericht, structures = get_unstable_faulted_structure(
             self.ctx.current_structure.get_ase(),
             n_unit_cells=self.inputs.n_repeats.value,
+            gliding_plane=self.inputs.gliding_plane.value,
             )
         if strukturbericht:
-            self.report(f'{strukturbericht} structure is detected for ISFE calculation.')
+            self.report(f'{strukturbericht} structure is detected.')
         else:
-            self.report(f'Strukturbericht can not be detected for ISFE calculation.')
+            self.report(f'Strukturbericht can not be detected.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
         self.ctx.structures = structures
@@ -379,7 +382,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
 
     def should_run_sfe(self):
-        return self._PW_SFE_NAMESPACE in self.inputs
+        if self._PW_SFE_NAMESPACE not in self.inputs:
+            return False
+        else:
+            return True
     
     def setup_sfe(self):
         pass

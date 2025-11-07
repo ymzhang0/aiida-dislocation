@@ -1,14 +1,5 @@
+[![Templated from python-copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/mbercx/python-copier/refs/heads/main/docs/img/badge.json)](https://github.com/mbercx/python-copier)
+
 # `aiida-dislocation`
 
-AiiDA plugin package with workflows for dislocation properties research based on the Quantum ESPRESSO software suite.
-
-## Installation
-
-To install the latest version from the PyPI, simply run:
-
-```
-pip install aiida-dislocation
-```
-
-## Acknowledgements
-
+Python package

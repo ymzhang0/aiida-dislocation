@@ -10,7 +10,7 @@ from ase.build import make_supercell
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 import pathlib
 import typing as ty
-import copy
+from copy import deepcopy
 import itertools
 
 class AttributeDict(dict):
@@ -47,9 +47,17 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 2,
-            'intrinsic_removal': None,
-            'extrinsic_removal': None,
-            'unstable_removal': [2],
+            # 'intrinsic_removal': [2],
+            # 'extrinsic_removal': None,
+            # 'unstable_removal': [2],
+            'instrinsic_possible': False,
+            'extrinsic_possible': False,
+            'unstable_possible': True,
+            'unstable_burger_vectors': [
+                [1/2, 0, 0],
+                [0, 1/2, 0],
+                [1/2, 1/2, 0]
+                ]
         },
         '111':{
             'transformation_matrix': [
@@ -63,9 +71,20 @@ _GLIDING_SYSTEMS = {
                 [1, 1, 1]
             ],
             'n_layers': 3,
-            'intrinsic_removal': [3],
+            'intrinsic_possible': True,
+            'intrinsic_burger_vectors': [
+                [0, 1/3, 0],
+            ],
+            'periodicity_intrinsic_gliding': False,
+            'extrinsic_possible': True,
             'extrinsic_removal': [3, 5],
+            'periodicity_extrinsic_gliding': False,
+            'unstable_possible': True,
             'unstable_removal': [3, 4],
+            'periodicity_unstable_gliding': False,
+            'unstable_burger_vectors': [
+                [0, 2/3, 0],
+            ],
         }
     },
     'A2': {
@@ -82,7 +101,7 @@ _GLIDING_SYSTEMS = {
             ],
             'n_layers': 2,
             'intrinsic_removal': [2],
-            'extrinsic_removal': None,
+            # 'extrinsic_removal': None,
             'unstable_removal': [2],
         },
         '111':{
@@ -110,9 +129,14 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 2,
-            'intrinsic_removal': None,
-            'extrinsic_removal': None,
-            'unstable_removal': [2],
+            # 'intrinsic_removal': [2],
+            # 'extrinsic_removal': None,
+            # 'unstable_removal': [2],
+            'unstable_burger_vectors': [
+                [1/2, 0, 0],
+                [0, 1/2, 0],
+                [1/2, 1/2, 0]
+            ]
         },
         '111':{
             'transformation_matrix': [
@@ -126,9 +150,8 @@ _GLIDING_SYSTEMS = {
                 [1, 1, 1]
             ],
             'n_layers': 6,
-            'intrinsic_removal': [3],
-            'extrinsic_removal': [3, 5],
-            'unstable_removal': [3, 4],
+            'intrinsic_removal': [6, 7, 8, 9],
+            'unstable_removal': [6, 7],
         }
     },
     'C1_b':{
@@ -139,7 +162,7 @@ _GLIDING_SYSTEMS = {
                 [1, 0, 0]
             ],
             'n_layers': 6,
-            'intrinsic_removal': None,
+            'intrinsic_removal': [2],
             'unstable_removal': [2],
             'extrinsic_removal': None,
         },
@@ -155,20 +178,20 @@ _GLIDING_SYSTEMS = {
                 [1, 1, 1]
             ],
             'n_layers': 9,
-            'intrinsic_removal': None,
-            'unstable_removal': [3, 4],
-            'extrinsic_removal': [3, 5],
+            'intrinsic_removal': [10, 11, 12, 13, 14, 15],
+            'unstable_removal': [10, 11, 12,],
+            # 'extrinsic_removal': [3, 5],
         }
     },
     'E_21':{
         '011':{
             'transformation_matrix': [
-                [1, 1, 0],
+                [0, 0, 1],
                 [-1, 1, 0],
-                [0, 0, 2]
+                [1, 1, 0]
             ],
             'n_layers': 4,
-            'intrinsic_removal': [2],
+            'intrinsic_removal': [4, 5],
             'extrinsic_removal': None,
         },
         '111':{
@@ -178,8 +201,9 @@ _GLIDING_SYSTEMS = {
                 [1, 1, 1]
             ],
             'n_layers': 6,
-            'intrinsic_removal': [6, 7],
-            'extrinsic_removal': [6, 7, 10, 11],
+            'intrinsic_removal': [6, 7, 8, 9],
+            'unstable_removal': [6, 7],
+            # 'extrinsic_removal': [6, 7, 8, 12, 13, 14],
         }
     }
 }
@@ -395,7 +419,7 @@ def build_atoms_surface(
 
     if n_unit_cells < 1 or type(n_unit_cells) != int:
         raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
-    
+
     stacking_order = n_unit_cells * ''.join(layers_dict.keys())
 
     zs = [(value['z'] + cell)/n_unit_cells/2 for cell in range(n_unit_cells) for value in layers_dict.values()]
@@ -409,9 +433,9 @@ def build_atoms_surface(
             scaled_position[-1] = z
             atom.position = scaled_position @ new_cell
             atoms.append(atom)
-            
+
     return atoms
-    
+
 def build_atoms_from_stacking_removal(
     ase_atoms_uc,
     n_unit_cells,
@@ -421,7 +445,7 @@ def build_atoms_from_stacking_removal(
     ):
 
     atoms = Atoms()
-    
+
     stacking_order = n_unit_cells * ''.join(layers_dict.keys())
     if n_unit_cells < 1 or type(n_unit_cells) != int:
         raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
@@ -432,7 +456,7 @@ def build_atoms_from_stacking_removal(
 
     removed_spacing = 0.0
     faulted_stacking = "".join([char for i, char in enumerate(stacking_order) if i not in removed_layers])
-    
+
     for removed_layer in removed_layers:
         spacing = zs[removed_layer] - zs[removed_layer - 1]
         removed_spacing += spacing
@@ -451,10 +475,11 @@ def build_atoms_from_stacking_removal(
     atoms.set_cell(new_cell)
     for layer_label, z in zip(faulted_stacking, zs):
         for atom in layers_dict[layer_label]['atoms']:
-            scaled_position = atom.scaled_position
+            new_atom = deepcopy(atom)
+            scaled_position = new_atom.scaled_position
             scaled_position[-1] = z
-            atom.position = scaled_position @ new_cell
-            atoms.append(atom)
+            new_atom.position = scaled_position @ new_cell
+            atoms.append(new_atom)
     return atoms
 
 def build_atoms_from_stacking_mirror(
@@ -477,41 +502,42 @@ def build_atoms_from_stacking_mirror(
 
     # Taking 3 unit cells of 3-layer unit cell as an example
     # Firstly, we place an 'ABC' stacking as a substrate.
-    
+
     spacings = [
         (layers_dict[label]['z'] - layers_dict[prev_label]['z'])*z_norm
         for label, prev_label in zip(stacking_order_uc[1:], stacking_order_uc[:-1])
         ]
+    connection_to_next_cell = (1 + layers_dict[stacking_order[0]]['z'] - layers_dict[stacking_order[-1]]['z']) * z_norm
     if print_info:
         print(spacings)
     # Then we calculate the z coordinate of 3 stacked unit cells.
     # (ABC)ABCABCABC
     zs = [
         (value['z'] + layer) * z_norm
-        for layer in range(n_unit_cells) 
+        for layer in range(n_unit_cells)
         for value in layers_dict.values()
         ]
-
     # And we calculate the spacing of (ABC)CBACBACBA and reverse it.
-    # We calculate the spacing between the layers. 
+    # We calculate the spacing between the layers.
     # Note that the first spacing just link the substrate to the reversed layers.
     # It's convenient then we remove one C layer.
-    # We pop the last spacing between B and A because 
+    # We pop the last spacing between B and A because
     # it will be calculated later when we do normal stacking.
     spacings += [
         z - prev_z
         for z, prev_z in zip(zs[1:], zs[:-1])
         ][::-1]
-    
-    spacings.pop()
+
+    # spacings.pop()
     if print_info:
-        print(spacings)
+        print('zs for reversed layers', zs)
+        print('spacings for reversed layers', spacings)
     # Here we do the stacking of the rest (n_unit_cells-1) unit cells.
     # Because we already have one substrate unit cell.
     # (ABC)(BACBACBA)(BCABC)
     zs = [
         (value['z'] + layer + n_unit_cells+1) * z_norm
-        for layer in range(n_unit_cells-1) 
+        for layer in range(n_unit_cells-1)
         for value in layers_dict.values()
         ]
 
@@ -519,26 +545,139 @@ def build_atoms_from_stacking_mirror(
         z - prev_z
         for z, prev_z in zip(zs[1:], zs[:-1])
         ]
+
     if print_info:
         print(spacings)
     # spacings += [(layers_dict[stacking_order_uc[0]]['z']+1.0 - layers_dict[stacking_order_uc[-1]]['z']) / n_layers/2]
-    
+
     zs = [0.0] + list(itertools.accumulate(spacings))
     if print_info:
         print(zs)
 
+    new_thickness = zs[-1] + connection_to_next_cell
 
     faulted_stacking = stacking_order_uc[:-1] + stacking_order_uc_r * n_unit_cells + (stacking_order_uc * (n_unit_cells-1))[1:]
     if print_info:
         print(faulted_stacking)
-    z_dialation = len(stacking_order) / len(layers_dict)
+    z_dialation = new_thickness / z_norm
     new_cell = ase_atoms_uc.cell.array.copy()
     new_cell[-1] *= z_dialation
     atoms.set_cell(new_cell)
     for layer_label, z in zip(faulted_stacking, zs):
         for atom in layers_dict[layer_label]['atoms']:
-            atom.scaled_position[-1] = z
-            atoms.append(atom)
+            new_atom = deepcopy(atom)
+            scaled_position = new_atom.scaled_position
+            scaled_position[-1] = z / new_thickness
+            new_atom.position = scaled_position @ new_cell
+            atoms.append(new_atom)
+
+    return atoms
+
+def build_atoms_from_burger_vector(
+    ase_atoms_uc,
+    n_unit_cells,
+    burger_vector,
+    layers_dict,
+    print_info = False,
+    ):
+
+    atoms = Atoms()
+
+    stacking_order = ''.join(layers_dict.keys())
+    if n_unit_cells < 2 or type(n_unit_cells) != int:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+
+    zs = [(value['z'] + layer)/n_unit_cells/2 for layer in range(2*n_unit_cells) for value in layers_dict.values()][::-1]
+
+    if print_info:
+        print(zs)
+
+    new_cell = ase_atoms_uc.cell.array.copy()
+    new_cell[-1] *= (n_unit_cells*2)
+    atoms.set_cell(new_cell)
+
+    for layer_label in stacking_order:
+        z = zs.pop()
+        for atom in layers_dict[layer_label]['atoms']:
+            new_atom = deepcopy(atom)
+            scaled_position = new_atom.scaled_position
+            scaled_position[-1] = z
+            new_atom.position = scaled_position @ new_cell
+            atoms.append(new_atom)
+
+    for layer in range(n_unit_cells):
+        for layer_label in stacking_order:
+            z = zs.pop()
+            for atom in layers_dict[layer_label]['atoms']:
+                new_atom = deepcopy(atom)
+                scaled_position = new_atom.scaled_position
+                scaled_position += numpy.array(burger_vector)
+                scaled_position[-1] = z
+                new_atom.position = scaled_position @ new_cell
+                atoms.append(new_atom)
+
+    for layer in range(n_unit_cells-1):
+        for layer_label in stacking_order:
+            z = zs.pop()
+            for atom in layers_dict[layer_label]['atoms']:
+                new_atom = deepcopy(atom)
+                scaled_position = new_atom.scaled_position
+                scaled_position[-1] = z
+                new_atom.position = scaled_position @ new_cell
+                atoms.append(new_atom)
+
+    if zs:
+        raise ValueError(f"zs is not empty: {zs}")
+
+    return atoms
+
+def build_atoms_from_burger_vector_with_vacuum(
+    ase_atoms_uc,
+    n_unit_cells,
+    burger_vector,
+    layers_dict,
+    vacuum_ratio = 0.0,
+    print_info = False,
+    ):
+
+    atoms = Atoms()
+
+    stacking_order = ''.join(layers_dict.keys())
+    if n_unit_cells < 2 or type(n_unit_cells) != int:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+
+    new_cell = ase_atoms_uc.cell.array.copy()
+    new_cell[-1] *= n_unit_cells
+    new_cell[-1] *= (1 + vacuum_ratio)
+    atoms.set_cell(new_cell)
+
+    zs = [(value['z'] + layer)/n_unit_cells/2/(1 + vacuum_ratio) for layer in range(2*n_unit_cells) for value in layers_dict.values()][::-1]
+
+    # if print_info:
+    #     print(zs)
+
+    for layer in range(n_unit_cells):
+        for layer_label in stacking_order:
+            # z = (layers_dict[layer_label]['z'] + layer)/n_unit_cells/2/(1 + vacuum_ratio)
+            z = zs.pop()
+            for atom in layers_dict[layer_label]['atoms']:
+                new_atom = deepcopy(atom)
+                scaled_position = new_atom.scaled_position
+                scaled_position[-1] = z
+                new_atom.position = scaled_position @ new_cell
+                atoms.append(new_atom)
+
+    for layer in range(n_unit_cells):
+        for layer_label in stacking_order:
+            # z = (layers_dict[layer_label]['z'] + layer)/n_unit_cells/2/(1 + vacuum_ratio)
+            z = zs.pop()
+            for atom in layers_dict[layer_label]['atoms']:
+                new_atom = deepcopy(atom)
+                scaled_position = new_atom.scaled_position
+                scaled_position += numpy.array(burger_vector)
+                scaled_position[-1] = z
+                new_atom.position = scaled_position @ new_cell
+                atoms.append(new_atom)
 
     return atoms
 
@@ -570,7 +709,7 @@ def get_strukturbericht(
         "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Gold-Copper (AuCu3)
     }
     struct_to_check = AseAtomsAdaptor.get_structure(atoms_to_check)
-    
+
     try:
         # 2. Initialize the StructureMatcher.
         # primitive_cell=True is crucial because it compares the fundamental building block
@@ -584,7 +723,7 @@ def get_strukturbericht(
         for name, prototype_struct in PROTOTYPES.items():
             # Fetch the standard prototype structure
             # prototype_struct = mpr.get_structure_by_material_id(mp_id)
-            
+
             # Use the .fit() method to see if they match
             if matcher.fit_anonymous(struct_to_check, prototype_struct):
                 if print_info:
@@ -606,15 +745,15 @@ def get_unstable_faulted_structure(
         gliding_plane=None,
         P = None,
         n_unit_cells = 3,
-        burger_vector = None,
-        vacuum_ratio = 0,
+        # burger_vectors = None,
+        # vacuum_ratio = 0,
         print_info = False,
     ):
 
     strukturbericht = get_strukturbericht(ase_atoms_uc)
     if not strukturbericht:
         raise ValueError('No match found in the provided list of prototypes.')
-        
+
     if print_info:
         print(f'Strukturbericht {strukturbericht} detected')
     if not gliding_plane:
@@ -631,6 +770,13 @@ def get_unstable_faulted_structure(
             f'We found {len(layers_dict)} layers.'
             'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
 
+    # We can always use vacuum space to generate faulted structure. And it is always firstly generated.
+
+    if 'intrinsic_possible' in gliding_system:
+        structures['intrinsic'] = build_atoms_from_stacking_removal(
+            ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
+        )
+
     structures = AttributeDict({
         'unfaulted': ase_atoms_t,
     # ...ABC*(A)BCABC...
@@ -641,10 +787,6 @@ def get_unstable_faulted_structure(
         'extrinsic': build_atoms_from_stacking_removal(
         ase_atoms_t, n_unit_cells, gliding_system['extrinsic_removal'], layers_dict, print_info = print_info,
         ) if 'extrinsic_removal' in gliding_system else NONE,
-    # ...ABC*BACBA*BCABC
-        'unstable': build_atoms_from_stacking_removal(
-        ase_atoms_t, n_unit_cells, gliding_system['unstable_removal'], layers_dict, print_info = print_info,
-        ) if 'unstable_removal' in gliding_system else NONE,
         'twinning': build_atoms_from_stacking_mirror(
         ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
         ) if gliding_system.get('n_layers') > 2 else NONE,
@@ -652,6 +794,30 @@ def get_unstable_faulted_structure(
         ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
         ),
     })
+
+    if 'unstable_removal' in gliding_system:
+        structures['unstable'] = (
+            (
+                build_atoms_from_stacking_removal(
+                    ase_atoms_t, n_unit_cells, gliding_system['unstable_removal'], layers_dict, print_info = print_info,
+                ),
+                gliding_system['unstable_removal']
+            ),
+            'removal'
+            )
+    elif 'unstable_burger_vectors' in gliding_system:
+
+        if gliding_system['periodicity_unstable_gliding']:
+            structures['unstable'] = [[], 'gliding']
+            for burger_vector in gliding_system['unstable_burger_vectors']:
+                structures['unstable'][0].append(
+                    (
+                        build_atoms_from_burger_vector(
+                            ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info = print_info,
+                        ),
+                        burger_vector
+                    )
+                )
 
     return (strukturbericht, structures)
 
