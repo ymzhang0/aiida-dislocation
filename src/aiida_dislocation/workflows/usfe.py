@@ -10,15 +10,14 @@ from ase.formula import Formula
 class USFEWorkChain(SFEBaseWorkChain):
     """ISFE WorkChain"""
 
-    _NAMESPACE = 'usfe'
-    _PW_SFE_NAMESPACE = "pw_usfe"
+    _SFE_NAMESPACE = "usfe"
 
     @classmethod
     def define(cls, spec):
         super().define(spec)
         
         spec.exit_code(
-            403,
+            404,
             "ERROR_SUB_PROCESS_FAILED_USF",
             message='The `PwBaseWorkChain` for the USF run failed.',
         )
@@ -100,10 +99,10 @@ class USFEWorkChain(SFEBaseWorkChain):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE
+                namespace=self._SFE_NAMESPACE
                 )
             )
-        inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
+        inputs.metadata.call_link_label = self._SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_sfe
@@ -125,13 +124,13 @@ class USFEWorkChain(SFEBaseWorkChain):
         self.report(
             f'PwBaseWorkChain<{workchain.pk}> for unstable faulted geometry finished OK'
             )
-        # self.out_many(
-        #     self.exposed_outputs(
-        #         workchain,
-        #         PwBaseWorkChain,
-        #         namespace=self._PW_SFE_NAMESPACE,
-        #     ),
-        # )
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwBaseWorkChain,
+                namespace=self._SFE_NAMESPACE,
+            ),    
+        )
 
         self.ctx.total_energy_usf_geometry = self.ctx.total_energy_faulted_geometry = workchain.outputs.output_parameters.get('energy')
         self.report(f'Total energy of unstable faulted geometry [{self.ctx.unstable_multiplier} unit cells]: {self.ctx.total_energy_usf_geometry / self._RY2eV} Ry')

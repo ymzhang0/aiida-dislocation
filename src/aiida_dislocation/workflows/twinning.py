@@ -6,10 +6,9 @@ from aiida import orm
 from ase.formula import Formula
 
 class TwinningWorkChain(SFEBaseWorkChain):
-    """ISFE WorkChain"""
+    """Twinning WorkChain"""
 
-    _NAMESPACE = 'twinning'
-    _PW_SFE_NAMESPACE = "pw_twinning"
+    _SFE_NAMESPACE = "twinning"
 
     @classmethod
     def define(cls, spec):
@@ -17,14 +16,14 @@ class TwinningWorkChain(SFEBaseWorkChain):
 
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SFE_NAMESPACE,
+            namespace=cls._SFE_NAMESPACE,
             namespace_options={
                 'required': False,
             }
         )
         
         spec.exit_code(
-            403,
+            404,
             "ERROR_SUB_PROCESS_FAILED_TWINNING",
             message='The `PwBaseWorkChain` for the twinning run failed.',
         )
@@ -78,10 +77,10 @@ class TwinningWorkChain(SFEBaseWorkChain):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE
+                namespace=self._SFE_NAMESPACE
                 )
             )
-        inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
+        inputs.metadata.call_link_label = self._SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_sfe
@@ -107,7 +106,7 @@ class TwinningWorkChain(SFEBaseWorkChain):
             self.exposed_outputs(
                 workchain,
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE,
+                namespace=self._SFE_NAMESPACE,
             ),
         )
 

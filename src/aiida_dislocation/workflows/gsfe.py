@@ -19,13 +19,12 @@ from ..tools import get_unstable_faulted_structure
 class GSFEWorkChain(ProtocolMixin, WorkChain):
     """GSFE WorkChain"""
 
-    _PW_SCF_NAMESPACE = "pw_scf"
-    _PW_USF_NAMESPACE = "pw_usf"
-    _PW_SURFACE_ENERGY_NAMESPACE = "pw_surface_energy"
-    _PW_CURVE_NAMESPACE = "pw_curve"
+    _NAMESPACE = 'gsfe'
 
-    _workflow_name = 'gsfe'
-    _workflow_description = 'GSFE WorkChain'
+    _SCF_NAMESPACE = "scf"
+    _USF_NAMESPACE = "usf"
+    _SURFACE_ENERGY_NAMESPACE = "surface_energy"
+    _CURVE_NAMESPACE = "curve"
 
     # Strukturtyp, gliding plane, slipping direction
 
@@ -108,7 +107,118 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             ),
             cls.results,
         )
+        spec.expose_outputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_SCF_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        spec.expose_outputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_USF_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        spec.expose_outputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        spec.expose_outputs(
+            PwBaseWorkChain,
+            namespace=cls._PW_CURVE_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        
+        spec.exit_code(
+            401,
+            "ERROR_SUB_PROCESS_FAILED_RELAX",
+            message='The `PwBaseWorkChain` for the GSF run failed.',
+        )
+        
+        spec.exit_code(
+            402,
+            "ERROR_SUB_PROCESS_FAILED_SCF",
+            message='The `PwBaseWorkChain` for the USF run failed.',
+        )
+        spec.exit_code(
+            403,
+            "ERROR_SUB_PROCESS_FAILED_USF",
+            message='The `PwBaseWorkChain` for the USF run failed.',
+        )
+        spec.exit_code(
+            404,
+            "ERROR_SUB_PROCESS_FAILED_CURVE",
+            message='The `PwBaseWorkChain` for the curve run failed.',
+        )
+        spec.exit_code(
+            405,
+            "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
+            message='The `PwBaseWorkChain` for the surface energy run failed.',
+        )
+        
+    @classmethod
+    def get_protocol_overrides(cls) -> dict:
+        """Get the ``overrides`` of the default protocol."""
+        from importlib_resources import files
+        import yaml
+        from . import protocols
 
+        path = files(protocols) / f"{cls._NAMESPACE}.yaml"
+        with path.open() as file:
+            return yaml.safe_load(file)
+
+    @classmethod
+    def get_builder_from_protocol(
+            cls,
+            code,
+            structure,
+            protocol='moderate',
+            overrides=None,
+            **kwargs
+        ):
+        """Return a builder prepopulated with inputs selected according to the chosen protocol.
+        """
+        inputs = cls.get_protocol_inputs(protocol, overrides)
+        args = (code, structure, protocol)
+
+        builder = cls.get_builder()
+
+        # Set up the sub-workchains
+        for namespace, workchain_type in [
+            (cls._PW_RELAX_NAMESPACE, PwRelaxWorkChain),
+            (cls._PW_SCF_NAMESPACE, PwBaseWorkChain),
+            (cls._PW_SFE_NAMESPACE, PwBaseWorkChain),
+            (cls._PW_SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
+        ]:
+            sub_builder = workchain_type.get_builder_from_protocol(
+                *args,
+                overrides=inputs.get(namespace, {}),
+            )
+            sub_builder.pop('structure', None)
+            sub_builder.pop('clean_workdir', None)
+
+            if namespace != cls._PW_RELAX_NAMESPACE:
+                sub_builder.pop('kpoints', None)
+                sub_builder.pop('kpoints_distance', None)
+
+            builder[namespace]._data = sub_builder._data
+
+        builder[cls._PW_RELAX_NAMESPACE].pop('base_final_scf', None)
+        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints', None)
+        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
+        builder.structure = structure
+        builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
+        builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
+        builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
+
+        return builder
     def setup(self):
         self.ctx.current_structure = self.inputs.structure
         self.ctx.kpoints = self.inputs.kpoints

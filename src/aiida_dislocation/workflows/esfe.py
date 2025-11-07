@@ -8,8 +8,7 @@ from ase.formula import Formula
 class ESFEWorkChain(SFEBaseWorkChain):
     """ESFE WorkChain"""
     
-    _NAMESPACE = 'esfe'
-    _PW_SFE_NAMESPACE = "pw_esfe"
+    _SFE_NAMESPACE = "esfe"
 
     @classmethod
     def define(cls, spec):
@@ -17,7 +16,7 @@ class ESFEWorkChain(SFEBaseWorkChain):
 
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SFE_NAMESPACE,
+            namespace=cls._SFE_NAMESPACE,
             namespace_options={
                 'required': False,
             }
@@ -78,10 +77,10 @@ class ESFEWorkChain(SFEBaseWorkChain):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE
+                namespace=self._SFE_NAMESPACE
                 )
             )
-        inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
+        inputs.metadata.call_link_label = self._SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_sfe
@@ -107,7 +106,7 @@ class ESFEWorkChain(SFEBaseWorkChain):
             self.exposed_outputs(
                 workchain,
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE,
+                namespace=self._SFE_NAMESPACE,
             ),
         )
 

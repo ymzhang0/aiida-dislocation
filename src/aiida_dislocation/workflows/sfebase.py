@@ -16,10 +16,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     """SFEBase WorkChain"""
 
     _NAMESPACE = 'sfebase'
-    _PW_RELAX_NAMESPACE = "pw_relax"
-    _PW_SCF_NAMESPACE = "pw_scf"
-    _PW_SFE_NAMESPACE = "pw_sfe"
-    _PW_SURFACE_ENERGY_NAMESPACE = "pw_surface_energy"
+    _RELAX_NAMESPACE = "relax"
+    _SCF_NAMESPACE = "scf"
+    _SFE_NAMESPACE = "sfe"
+    _SURFACE_ENERGY_NAMESPACE = "surface_energy"
 
     _RY2eV    = 13.605693122990
     _RYA22Jm2 = 4.3597447222071E-18/2 * 1E+20
@@ -41,7 +41,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_inputs(
             PwRelaxWorkChain,
-            namespace=cls._PW_RELAX_NAMESPACE,
+            namespace=cls._RELAX_NAMESPACE,
             exclude=(
                 'structure',
                 'clean_workdir',
@@ -55,7 +55,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_inputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SCF_NAMESPACE,
+            namespace=cls._SCF_NAMESPACE,
             exclude=(
                 'pw.structure',
                 'clean_workdir',
@@ -71,7 +71,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_inputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SFE_NAMESPACE,
+            namespace=cls._SFE_NAMESPACE,
             exclude=(
                 'pw.structure',
                 'clean_workdir',
@@ -87,7 +87,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_inputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
+            namespace=cls._SURFACE_ENERGY_NAMESPACE,
             exclude=(
                 'pw.structure',
                 'clean_workdir',
@@ -126,7 +126,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_outputs(
             PwRelaxWorkChain,
-            namespace=cls._PW_RELAX_NAMESPACE,
+            namespace=cls._RELAX_NAMESPACE,
             namespace_options={
                 'required': False,
             }
@@ -134,23 +134,15 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SCF_NAMESPACE,
+            namespace=cls._SCF_NAMESPACE,
             namespace_options={
                 'required': False,
             }
         )
 
-        # spec.expose_outputs(
-        #     PwBaseWorkChain,
-        #     namespace=cls._PW_SFE_NAMESPACE,
-        #     namespace_options={
-        #         'required': False,
-        #     }
-        # )
-
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
+            namespace=cls._SURFACE_ENERGY_NAMESPACE,
             namespace_options={
                 'required': False,
             }
@@ -172,7 +164,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             message='The structure type can not be detected.',
         )
         spec.exit_code(
-            404,
+            405,
             "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
             message='The `PwBaseWorkChain` for the surface energy calculation failed.',
         )
@@ -182,7 +174,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         """Return ``pathlib.Path`` to the ``.yaml`` file that defines the protocols."""
         from importlib_resources import files
         from . import protocols
-        return files(protocols) / f'{cls._NAMESPACE}.yaml'
+        return files(protocols) / f'{cls._SFE_NAMESPACE}.yaml'
 
     @classmethod
     def get_protocol_overrides(cls) -> dict:
@@ -213,10 +205,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         # Set up the sub-workchains
         for namespace, workchain_type in [
-            (cls._PW_RELAX_NAMESPACE, PwRelaxWorkChain),
-            (cls._PW_SCF_NAMESPACE, PwBaseWorkChain),
-            (cls._PW_SFE_NAMESPACE, PwBaseWorkChain),
-            (cls._PW_SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
+            (cls._RELAX_NAMESPACE, PwRelaxWorkChain),
+            (cls._SCF_NAMESPACE, PwBaseWorkChain),
+            (cls._SFE_NAMESPACE, PwBaseWorkChain),
+            (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             sub_builder = workchain_type.get_builder_from_protocol(
                 *args,
@@ -231,9 +223,9 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
             builder[namespace]._data = sub_builder._data
 
-        builder[cls._PW_RELAX_NAMESPACE].pop('base_final_scf', None)
-        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints', None)
-        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
+        builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
+        builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
+        builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
@@ -242,22 +234,21 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         return builder
 
     def should_run_relax(self):
-        return self._PW_RELAX_NAMESPACE in self.inputs
+        return self._RELAX_NAMESPACE in self.inputs
     
     def run_relax(self):
 
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwRelaxWorkChain,
-                namespace=self._PW_RELAX_NAMESPACE
+                namespace=self._RELAX_NAMESPACE
                 )
             )
 
-        inputs.metadata.call_link_label = self._PW_RELAX_NAMESPACE
+        inputs.metadata.call_link_label = self._RELAX_NAMESPACE
 
         inputs.structure = self.inputs.structure
         inputs.base.kpoints_distance = self.inputs.kpoints_distance
-        # inputs.base.pop('kpoints')
 
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} unit cell geometry.')
@@ -280,7 +271,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             self.exposed_outputs(
                 workchain,
                 PwRelaxWorkChain,
-                namespace=self._PW_RELAX_NAMESPACE,
+                namespace=self._RELAX_NAMESPACE,
             ),
         )
         self.ctx.total_energy_unit_cell = workchain.outputs.output_parameters.get('energy')
@@ -329,17 +320,17 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
     def should_run_scf(self):
 
-        return self._PW_SCF_NAMESPACE in self.inputs
+        return self._SCF_NAMESPACE in self.inputs
     
     def run_scf(self):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SCF_NAMESPACE
+                namespace=self._SCF_NAMESPACE
                 )
             )
 
-        inputs.metadata.call_link_label = self._PW_SCF_NAMESPACE
+        inputs.metadata.call_link_label = self._SCF_NAMESPACE
 
         inputs.pw.structure = orm.StructureData(
             ase=self.ctx.structures.unfaulted
@@ -367,7 +358,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             self.exposed_outputs(
                 workchain,
                 PwBaseWorkChain,
-                namespace=self._PW_SCF_NAMESPACE,
+                namespace=self._SCF_NAMESPACE,
             ),
         )
         self.ctx.kpoints_scf = workchain.base.links.get_outgoing(
@@ -382,7 +373,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
 
     def should_run_sfe(self):
-        if self._PW_SFE_NAMESPACE not in self.inputs:
+        if self._SFE_NAMESPACE not in self.inputs:
             return False
         else:
             return True
@@ -391,7 +382,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         pass
     
     def should_run_surface_energy(self):
-        if self._PW_SURFACE_ENERGY_NAMESPACE in self.inputs:
+        if self._SURFACE_ENERGY_NAMESPACE in self.inputs:
             self.report(
                 "We are running surface energy calculation. "
             )
@@ -406,10 +397,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SURFACE_ENERGY_NAMESPACE
+                namespace=self._SURFACE_ENERGY_NAMESPACE
                 )
             )
-        inputs.metadata.call_link_label = self._PW_SURFACE_ENERGY_NAMESPACE
+        inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
 
         inputs.pw.structure = orm.StructureData(
             ase=self.ctx.structures.cleavaged
@@ -437,7 +428,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             self.exposed_outputs(
                 workchain,
                 PwBaseWorkChain,
-                namespace=self._PW_SURFACE_ENERGY_NAMESPACE,
+                namespace=self._SURFACE_ENERGY_NAMESPACE,
             ),
         )
 

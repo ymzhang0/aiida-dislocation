@@ -8,8 +8,7 @@ from ase.formula import Formula
 class ISFEWorkChain(SFEBaseWorkChain):
     """ISFE WorkChain"""
 
-    _NAMESPACE = 'isfe'
-    _PW_SFE_NAMESPACE = "pw_isfe"
+    _SFE_NAMESPACE = "isfe"
 
     @classmethod
     def define(cls, spec):
@@ -17,14 +16,14 @@ class ISFEWorkChain(SFEBaseWorkChain):
         
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._PW_SFE_NAMESPACE,
+            namespace=cls._SFE_NAMESPACE,
             namespace_options={
                 'required': False,
             }
         )
         
         spec.exit_code(
-            403,
+            404,
             "ERROR_SUB_PROCESS_FAILED_ISF",
             message='The `PwBaseWorkChain` for the ISF run failed.',
         )
@@ -78,10 +77,10 @@ class ISFEWorkChain(SFEBaseWorkChain):
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE
+                namespace=self._SFE_NAMESPACE
                 )
             )
-        inputs.metadata.call_link_label = self._PW_SFE_NAMESPACE
+        inputs.metadata.call_link_label = self._SFE_NAMESPACE
 
         inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_sfe
@@ -107,7 +106,7 @@ class ISFEWorkChain(SFEBaseWorkChain):
             self.exposed_outputs(
                 workchain,
                 PwBaseWorkChain,
-                namespace=self._PW_SFE_NAMESPACE,
+                namespace=self._SFE_NAMESPACE,
             ),
         )
 
