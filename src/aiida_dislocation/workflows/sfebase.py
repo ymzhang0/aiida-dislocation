@@ -183,7 +183,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         import yaml
         from . import protocols
 
-        path = files(protocols) / f"{cls._NAMESPACE}.yaml"
+        path = files(protocols) / f"{cls._SFE_NAMESPACE}.yaml"
         with path.open() as file:
             return yaml.safe_load(file)
 
@@ -210,22 +210,27 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             (cls._SFE_NAMESPACE, PwBaseWorkChain),
             (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
+            overrides = inputs.get(namespace, {})
+            if namespace == cls._RELAX_NAMESPACE:
+                overrides['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
+            else:
+                overrides['pseudo_family'] = inputs.get('pseudo_family', None)
             sub_builder = workchain_type.get_builder_from_protocol(
                 *args,
-                overrides=inputs.get(namespace, {}),
+                overrides=overrides,
             )
             sub_builder.pop('structure', None)
             sub_builder.pop('clean_workdir', None)
 
-            if namespace != cls._PW_RELAX_NAMESPACE:
+            if namespace != cls._RELAX_NAMESPACE:
                 sub_builder.pop('kpoints', None)
                 sub_builder.pop('kpoints_distance', None)
 
             builder[namespace]._data = sub_builder._data
 
-        builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
-        builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
-        builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
+        builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
+        builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))

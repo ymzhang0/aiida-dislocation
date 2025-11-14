@@ -16,7 +16,7 @@ class ISFEWorkChain(SFEBaseWorkChain):
         
         spec.expose_outputs(
             PwBaseWorkChain,
-            namespace=cls._SFE_NAMESPACE,
+            namespace=cls._NAMESPACE,
             namespace_options={
                 'required': False,
             }
