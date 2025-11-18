@@ -1,22 +1,27 @@
 default_inputs:
   clean_workdir: True
   kpoints_distance: 0.5
-  pw_relax:
+  relax:
+    base_relax:
+      pw:
+        metadata:
+            options:
+                withmpi: True
+
+  scf:
+    pw:
       metadata:
           options:
               withmpi: True
 
-  pw_scf:
+  sfe:
+    pw:
       metadata:
           options:
               withmpi: True
 
-  pw_sfe:
-      metadata:
-          options:
-              withmpi: True
-
-  pw_surface_energy:
+  surface_energy:
+    pw:
       metadata:
           options:
               withmpi: True

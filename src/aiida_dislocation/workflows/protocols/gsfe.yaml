@@ -9,17 +9,17 @@ parameters:
         nosym: False
         noinv: False
 
-pw_base_uc:
+uc:
     pw:
         metadata: *metadata
         parameters: *parameters
 
-pw_base_sf:
+sf:
     pw:
         metadata: *metadata
         parameters: *parameters
 
-pw_base_surface:
+surface:
     pw:
         metadata: *metadata
         parameters: *parameters

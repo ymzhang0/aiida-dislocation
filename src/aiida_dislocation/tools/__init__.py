@@ -13,6 +13,7 @@ from .structure import (
     is_primitive_cell,
     get_elements_for_wyckoff_symbols,
     get_kpoints_mesh_for_supercell,
+    calculate_surface_area,
 )
 
 from .cut import (
@@ -54,4 +55,5 @@ __all__ = (
     'plot_layer',
     'plot_layers',
     'plot_all_layers_element_colored',
+    'calculate_surface_area',
 )

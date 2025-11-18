@@ -1,6 +1,5 @@
 from .sfebase import SFEBaseWorkChain
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext, while_, append_
 
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
@@ -110,10 +109,10 @@ class USFEWorkChain(SFEBaseWorkChain):
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for unstable stacking fault.')
 
-        self.to_context(workchain_sfe = append_(running))
+        self.to_context(workchain_sfe = running)
 
     def inspect_sfe(self):
-        workchain = self.ctx.workchain_sfe[-1]
+        workchain = self.ctx.workchain_sfe
 
         if not workchain.is_finished_ok:
             self.report(

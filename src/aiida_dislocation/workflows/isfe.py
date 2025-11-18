@@ -14,13 +14,13 @@ class ISFEWorkChain(SFEBaseWorkChain):
     def define(cls, spec):
         super().define(spec)
         
-        spec.expose_outputs(
-            PwBaseWorkChain,
-            namespace=cls._NAMESPACE,
-            namespace_options={
-                'required': False,
-            }
-        )
+        # spec.expose_outputs(
+        #     PwBaseWorkChain,
+        #     namespace=cls._SFE_NAMESPACE,
+        #     namespace_options={
+        #         'required': False,
+        #     }
+        # )
         
         spec.exit_code(
             404,
@@ -32,11 +32,12 @@ class ISFEWorkChain(SFEBaseWorkChain):
         ## todo: I don't know why but when running sfe the PwBaseWorkChain
         ## can't correctly generate the kpoints according to the kpoints_distance.
         ## I explicitly generate the kpoints here.
+        intrinsic_structure, fault_type = self.ctx.structures.intrinsic
         current_structure = orm.StructureData(
-            ase=self.ctx.structures.intrinsic
+            ase=intrinsic_structure
             )
         
-        intrinsic_formula = Formula(self.ctx.structures.intrinsic.get_chemical_formula())
+        intrinsic_formula = Formula(intrinsic_structure.get_chemical_formula())
         _, intrinsic_multiplier = intrinsic_formula.reduce()
         
         if 'kpoints_scf' in self.ctx:

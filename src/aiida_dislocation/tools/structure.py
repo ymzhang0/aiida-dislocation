@@ -3,6 +3,7 @@ from tkinter.constants import NONE
 from aiida import orm
 from math import sqrt, acos, pi, ceil
 import numpy
+import numpy.linalg as la
 import logging
 from ase import Atoms
 from ase.spacegroup import get_spacegroup
@@ -75,6 +76,7 @@ _GLIDING_SYSTEMS = {
             'intrinsic_burger_vectors': [
                 [0, 1/3, 0],
             ],
+            'intrinsic_removal': [3],
             'periodicity_intrinsic_gliding': False,
             'extrinsic_possible': True,
             'extrinsic_removal': [3, 5],
@@ -772,21 +774,9 @@ def get_unstable_faulted_structure(
 
     # We can always use vacuum space to generate faulted structure. And it is always firstly generated.
 
-    if 'intrinsic_possible' in gliding_system:
-        structures['intrinsic'] = build_atoms_from_stacking_removal(
-            ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
-        )
 
     structures = AttributeDict({
         'unfaulted': ase_atoms_t,
-    # ...ABC*(A)BCABC...
-        'intrinsic': build_atoms_from_stacking_removal(
-        ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
-        ) if 'intrinsic_removal' in gliding_system else NONE,
-    # ...ABC*(A)B(C)ABC...
-        'extrinsic': build_atoms_from_stacking_removal(
-        ase_atoms_t, n_unit_cells, gliding_system['extrinsic_removal'], layers_dict, print_info = print_info,
-        ) if 'extrinsic_removal' in gliding_system else NONE,
         'twinning': build_atoms_from_stacking_mirror(
         ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
         ) if gliding_system.get('n_layers') > 2 else NONE,
@@ -794,6 +784,25 @@ def get_unstable_faulted_structure(
         ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
         ),
     })
+
+    if 'intrinsic_removal' in gliding_system:
+        structures['intrinsic'] = (
+            build_atoms_from_stacking_removal(
+                ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
+            ),
+            'removal'
+        )
+    elif 'intrinsic_burger_vectors' in gliding_system:
+        structures['intrinsic'] = [[], 'gliding']
+        for burger_vector in gliding_system['intrinsic_burger_vectors']:
+            structures['intrinsic'][0].append(
+                (
+                    build_atoms_from_burger_vector(
+                        ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info = print_info,
+                    ),
+                    burger_vector
+                )
+            )
 
     if 'unstable_removal' in gliding_system:
         structures['unstable'] = (
@@ -806,7 +815,6 @@ def get_unstable_faulted_structure(
             'removal'
             )
     elif 'unstable_burger_vectors' in gliding_system:
-
         if gliding_system['periodicity_unstable_gliding']:
             structures['unstable'] = [[], 'gliding']
             for burger_vector in gliding_system['unstable_burger_vectors']:
@@ -1831,3 +1839,9 @@ def get_kpoints_mesh_for_supercell(
     kpoints_sc.set_kpoints_mesh(kpoints_mesh_sc)
 
     return kpoints_sc
+
+def calculate_surface_area(cell):
+    """
+    Calculate the surface area of the cell
+    """
+    return la.norm(numpy.cross(cell[0], cell[1]))

@@ -8,7 +8,7 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
-from ..tools import get_unstable_faulted_structure, is_primitive_cell
+from aiida_dislocation.tools import get_unstable_faulted_structure, is_primitive_cell, calculate_surface_area
 from aiida_quantumespresso.utils.mapping import prepare_process_inputs
 from ase.formula import Formula
 
@@ -142,6 +142,14 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         spec.expose_outputs(
             PwBaseWorkChain,
+            namespace=cls._SFE_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
+        )
+        
+        spec.expose_outputs(
+            PwBaseWorkChain,
             namespace=cls._SURFACE_ENERGY_NAMESPACE,
             namespace_options={
                 'required': False,
@@ -231,6 +239,8 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
         builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
+        builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
+
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
@@ -253,7 +263,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         inputs.metadata.call_link_label = self._RELAX_NAMESPACE
 
         inputs.structure = self.inputs.structure
-        inputs.base.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
 
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} unit cell geometry.')
@@ -301,10 +311,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         self.ctx.structures = structures
 
-        from numpy import cross
-        from numpy.linalg import norm
-        cell = self.ctx.structures.unfaulted.cell
-        self.ctx.surface_area = norm(cross(cell[0], cell[1]))
+        self.ctx.surface_area = calculate_surface_area(self.ctx.structures.unfaulted.cell)
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
         
