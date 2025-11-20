@@ -1,5 +1,4 @@
 from os import uname
-from tkinter.constants import NONE
 from aiida import orm
 from math import sqrt, acos, pi, ceil
 import numpy
@@ -13,6 +12,9 @@ import pathlib
 import typing as ty
 from copy import deepcopy
 import itertools
+from deprecated import deprecated
+from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
 
 class AttributeDict(dict):
     """
@@ -34,6 +36,205 @@ class AttributeDict(dict):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 # logger = logging.getLogger('aiida.workflow.dislocation')
+
+
+@dataclass
+class FaultConfig:
+    """Configuration for a fault type (intrinsic, unstable, or extrinsic)."""
+    removal_layers: ty.Optional[list[int]] = None
+    burger_vectors: ty.Optional[list[list[float]]] = None
+    periodicity: bool = False
+    possible: bool = True
+
+
+@dataclass
+class GlidingPlaneConfig:
+    """Configuration for a specific gliding plane."""
+    transformation_matrix: list[list[int]]
+    transformation_matrix_c: ty.Optional[list[list[int]]] = None
+    n_layers: int = 2
+    intrinsic: FaultConfig = field(default_factory=FaultConfig)
+    unstable: FaultConfig = field(default_factory=FaultConfig)
+    extrinsic: FaultConfig = field(default_factory=FaultConfig)
+
+
+class GlidingSystem(ABC):
+    """Base class for gliding system configurations."""
+    
+    default_plane: str = '111'  # Default gliding plane, can be overridden by subclasses
+    
+    def __init__(self, strukturbericht: str):
+        self.strukturbericht = strukturbericht
+        self._planes: dict[str, GlidingPlaneConfig] = {}
+        self._register_planes()
+    
+    @abstractmethod
+    def _register_planes(self):
+        """Register all gliding planes for this system."""
+        pass
+    
+    def get_plane(self, gliding_plane: str) -> GlidingPlaneConfig:
+        """Get configuration for a specific gliding plane."""
+        if gliding_plane not in self._planes:
+            raise ValueError(
+                f'Gliding plane {gliding_plane} is not supported for {self.strukturbericht}. '
+                f'Supported planes: {list(self._planes.keys())}'
+            )
+        return self._planes[gliding_plane]
+    
+    def list_planes(self) -> list[str]:
+        """List all supported gliding planes."""
+        return list(self._planes.keys())
+
+
+# Concrete implementations
+class A1GlidingSystem(GlidingSystem):
+    """A1 (FCC) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            transformation_matrix_c=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            n_layers=2,
+            intrinsic=FaultConfig(possible=False),
+            extrinsic=FaultConfig(possible=False),
+            unstable=FaultConfig(
+                possible=True,
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]]
+            )
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            n_layers=3,
+            intrinsic=FaultConfig(
+                possible=True,
+                removal_layers=[3],
+                burger_vectors=[[0, 1/3, 0]],
+                periodicity=False
+            ),
+            extrinsic=FaultConfig(
+                possible=True,
+                removal_layers=[3, 5],
+                periodicity=False
+            ),
+            unstable=FaultConfig(
+                possible=True,
+                removal_layers=[3, 4],
+                burger_vectors=[[0, 2/3, 0]],
+                periodicity=False
+            )
+        )
+
+
+class A2GlidingSystem(GlidingSystem):
+    """A2 (BCC) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, 0], [0, 0, 1], [2, 1, 1]],
+            transformation_matrix_c=[[0, 1, -1], [0, 1, 1], [2, 1, 1]],
+            n_layers=2,
+            intrinsic=FaultConfig(removal_layers=[2]),
+            unstable=FaultConfig(removal_layers=[2])
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[-1, 1, 0], [-1, 0, 1], [1, 1, 1]],
+            transformation_matrix_c=[[-2, 1, 1], [0, -1, 1], [2, 2, 2]],
+            n_layers=3,
+            intrinsic=FaultConfig(removal_layers=[3]),
+            extrinsic=FaultConfig(removal_layers=[3, 5]),
+            unstable=FaultConfig(removal_layers=[3, 4])
+        )
+
+
+class B1GlidingSystem(GlidingSystem):
+    """B1 (NaCl) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            n_layers=2,
+            unstable=FaultConfig(
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]]
+            )
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            n_layers=6,
+            intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9]),
+            unstable=FaultConfig(removal_layers=[6, 7])
+        )
+
+
+class C1bGlidingSystem(GlidingSystem):
+    """C1b (Half-Heusler) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            n_layers=6,
+            intrinsic=FaultConfig(removal_layers=[2]),
+            unstable=FaultConfig(removal_layers=[2]),
+            extrinsic=FaultConfig(possible=False)
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            n_layers=9,
+            intrinsic=FaultConfig(removal_layers=[10, 11, 12, 13, 14, 15]),
+            unstable=FaultConfig(removal_layers=[10, 11, 12])
+        )
+
+
+class E21GlidingSystem(GlidingSystem):
+    """E21 (Perovskite) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 0, 1], [-1, 1, 0], [1, 1, 0]],
+            n_layers=4,
+            intrinsic=FaultConfig(removal_layers=[4, 5]),
+            extrinsic=FaultConfig(possible=False)
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            n_layers=6,
+            intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9]),
+            unstable=FaultConfig(removal_layers=[6, 7])
+        )
+
+
+# Registry for gliding systems
+_GLIDING_SYSTEM_REGISTRY: dict[str, type[GlidingSystem]] = {
+    'A1': A1GlidingSystem,
+    'A2': A2GlidingSystem,
+    'B1': B1GlidingSystem,
+    'C1_b': C1bGlidingSystem,
+    'E_21': E21GlidingSystem,
+}
+
+# Cache for instantiated systems
+_GLIDING_SYSTEM_CACHE: dict[str, GlidingSystem] = {}
+
+
+def get_gliding_system(strukturbericht: str) -> GlidingSystem:
+    """Get or create a gliding system instance."""
+    if strukturbericht not in _GLIDING_SYSTEM_REGISTRY:
+        raise ValueError(
+            f'Strukturbericht {strukturbericht} is not supported. '
+            f'Supported types: {list(_GLIDING_SYSTEM_REGISTRY.keys())}'
+        )
+    
+    if strukturbericht not in _GLIDING_SYSTEM_CACHE:
+        system_class = _GLIDING_SYSTEM_REGISTRY[strukturbericht]
+        _GLIDING_SYSTEM_CACHE[strukturbericht] = system_class(strukturbericht)
+    
+    return _GLIDING_SYSTEM_CACHE[strukturbericht]
+
+
+# Legacy dictionary for backward compatibility (deprecated)
 _GLIDING_SYSTEMS = {
     'A1': {
         '011':{
@@ -51,7 +252,7 @@ _GLIDING_SYSTEMS = {
             # 'intrinsic_removal': [2],
             # 'extrinsic_removal': None,
             # 'unstable_removal': [2],
-            'instrinsic_possible': False,
+            'intrinsic_possible': False,
             'extrinsic_possible': False,
             'unstable_possible': True,
             'unstable_burger_vectors': [
@@ -329,6 +530,7 @@ _IMPLEMENTED_SLIPPING_SYSTEMS = {
     },
 }
 
+@deprecated(reason="This function is not used in any workflow. Use ASE's built-in methods instead.")
 def check_bravais_lattice(ase_atoms):
     bl = ase_atoms.cell.get_bravais_lattice(eps=1e-6)
     return bl.name
@@ -419,8 +621,8 @@ def build_atoms_surface(
     ):
     atoms = Atoms()
 
-    if n_unit_cells < 1 or type(n_unit_cells) != int:
-        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+    if not isinstance(n_unit_cells, int) or n_unit_cells < 1:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be a positive integer.")
 
     stacking_order = n_unit_cells * ''.join(layers_dict.keys())
 
@@ -449,10 +651,13 @@ def build_atoms_from_stacking_removal(
     atoms = Atoms()
 
     stacking_order = n_unit_cells * ''.join(layers_dict.keys())
-    if n_unit_cells < 1 or type(n_unit_cells) != int:
-        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
-    if any(layer > len(stacking_order) for layer in removed_layers):
-        raise ValueError(f"Removed layers {removed_layers} is greater than the number of layers {len(layers_dict)}")
+    if not isinstance(n_unit_cells, int) or n_unit_cells < 1:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be a positive integer.")
+    if any(layer >= len(stacking_order) for layer in removed_layers):
+        raise ValueError(
+            f"Invalid removed layers {removed_layers}: layer indices must be < {len(stacking_order)} "
+            f"(number of layers in stacking order)"
+        )
 
     zs = [value['z']/n_unit_cells + layer/n_unit_cells for layer in range(n_unit_cells) for value in layers_dict.values()]
 
@@ -499,8 +704,8 @@ def build_atoms_from_stacking_mirror(
     stacking_order_uc = ''.join(layers_dict.keys())
     stacking_order = n_unit_cells * stacking_order_uc
     stacking_order_uc_r = stacking_order_uc[::-1]
-    if n_unit_cells < 1 or type(n_unit_cells) != int:
-        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+    if not isinstance(n_unit_cells, int) or n_unit_cells < 1:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be a positive integer.")
 
     # Taking 3 unit cells of 3-layer unit cell as an example
     # Firstly, we place an 'ABC' stacking as a substrate.
@@ -586,8 +791,8 @@ def build_atoms_from_burger_vector(
     atoms = Atoms()
 
     stacking_order = ''.join(layers_dict.keys())
-    if n_unit_cells < 2 or type(n_unit_cells) != int:
-        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+    if not isinstance(n_unit_cells, int) or n_unit_cells < 2:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be an integer >= 2.")
 
     zs = [(value['z'] + layer)/n_unit_cells/2 for layer in range(2*n_unit_cells) for value in layers_dict.values()][::-1]
 
@@ -633,6 +838,7 @@ def build_atoms_from_burger_vector(
 
     return atoms
 
+@deprecated(reason="This function is not used in any workflow. Use build_atoms_from_burger_vector instead.")
 def build_atoms_from_burger_vector_with_vacuum(
     ase_atoms_uc,
     n_unit_cells,
@@ -645,8 +851,8 @@ def build_atoms_from_burger_vector_with_vacuum(
     atoms = Atoms()
 
     stacking_order = ''.join(layers_dict.keys())
-    if n_unit_cells < 2 or type(n_unit_cells) != int:
-        raise ValueError(f"Invalid number of unit cells {n_unit_cells}")
+    if not isinstance(n_unit_cells, int) or n_unit_cells < 2:
+        raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be an integer >= 2.")
 
     new_cell = ase_atoms_uc.cell.array.copy()
     new_cell[-1] *= n_unit_cells
@@ -744,13 +950,30 @@ def get_strukturbericht(
 
 def get_unstable_faulted_structure(
         ase_atoms_uc,
-        gliding_plane=None,
-        P = None,
-        n_unit_cells = 3,
-        # burger_vectors = None,
-        # vacuum_ratio = 0,
-        print_info = False,
-    ):
+        gliding_plane: ty.Optional[str] = None,
+        P: ty.Optional[ty.Union[list, numpy.ndarray]] = None,
+        n_unit_cells: int = 3,
+        print_info: bool = False,
+    ) -> tuple[str, AttributeDict]:
+    """
+    Generate faulted structures for a given unit cell structure.
+    
+    Args:
+        ase_atoms_uc: ASE Atoms object representing the unit cell
+        gliding_plane: Gliding plane direction (e.g., '111', '011'). Defaults to '111'
+        P: Transformation matrix. If None, uses the default from gliding system
+        n_unit_cells: Number of unit cells to repeat
+        print_info: Whether to print debug information
+        
+    Returns:
+        Tuple of (strukturbericht, structures_dict) where structures_dict contains:
+            - 'conventional': Conventional structure
+            - 'twinning': Twinning structure (if applicable)
+            - 'cleavaged': Cleavaged surface structure
+            - 'intrinsic': Intrinsic fault structure (if configured)
+            - 'unstable': Unstable fault structure (if configured)
+            - 'extrinsic': Extrinsic fault structure (if configured)
+    """
 
     strukturbericht = get_strukturbericht(ase_atoms_uc)
     if not strukturbericht:
@@ -758,77 +981,311 @@ def get_unstable_faulted_structure(
 
     if print_info:
         print(f'Strukturbericht {strukturbericht} detected')
+    
+    # Get gliding system using new architecture
+    gliding_system = get_gliding_system(strukturbericht)
+    
+    # Use default plane if not provided
     if not gliding_plane:
-        gliding_plane = '111'
-
-    gliding_system = _GLIDING_SYSTEMS[strukturbericht][gliding_plane]
+        gliding_plane = gliding_system.default_plane
+    
+    plane_config = gliding_system.get_plane(gliding_plane)
+    
+    # Use provided transformation matrix or default from config
     if not P:
-        P = gliding_system['transformation_matrix']
+        P = plane_config.transformation_matrix
+    else:
+        P = numpy.array(P)
 
     ase_atoms_t = make_supercell(ase_atoms_uc, P)
     layers_dict = group_by_layers(ase_atoms_t)
-    if len(layers_dict) != gliding_system.get('n_layers'):
+    
+    if len(layers_dict) != plane_config.n_layers:
         raise ValueError(
-            f'We found {len(layers_dict)} layers.'
-            'This either comes from the wrong initial structure, or wrong indication of structure type, or wrong transformation.')
+            f'Layer count mismatch: found {len(layers_dict)} layers, but expected {plane_config.n_layers} for '
+            f'{strukturbericht} with gliding plane {gliding_plane}. '
+            'This may indicate wrong initial structure, incorrect structure type, or incorrect transformation matrix.'
+        )
 
-    # We can always use vacuum space to generate faulted structure. And it is always firstly generated.
-
-
+    # Build base structures using unified function
     structures = AttributeDict({
-        'unfaulted': ase_atoms_t,
-        'twinning': build_atoms_from_stacking_mirror(
-        ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
-        ) if gliding_system.get('n_layers') > 2 else NONE,
-        'cleavaged': build_atoms_surface(
-        ase_atoms_t, n_unit_cells, layers_dict, print_info = print_info,
+        'conventional': _build_base_structure(
+            'unfaulted', ase_atoms_t, n_unit_cells, layers_dict, plane_config, print_info
+        ),
+        'twinning': _build_base_structure(
+            'twinning', ase_atoms_t, n_unit_cells, layers_dict, plane_config, print_info
+        ),
+        'cleavaged': _build_base_structure(
+            'cleavaged', ase_atoms_t, n_unit_cells, layers_dict, plane_config, print_info
         ),
     })
 
-    if 'intrinsic_removal' in gliding_system:
-        structures['intrinsic'] = (
-            build_atoms_from_stacking_removal(
-                ase_atoms_t, n_unit_cells, gliding_system['intrinsic_removal'], layers_dict, print_info = print_info,
-            ),
-            'removal'
-        )
-    elif 'intrinsic_burger_vectors' in gliding_system:
-        structures['intrinsic'] = [[], 'gliding']
-        for burger_vector in gliding_system['intrinsic_burger_vectors']:
-            structures['intrinsic'][0].append(
-                (
-                    build_atoms_from_burger_vector(
-                        ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info = print_info,
-                    ),
-                    burger_vector
-                )
-            )
+    # Build faulted structures using new architecture
+    intrinsic_fault = _build_faulted_structure(
+        plane_config.intrinsic, ase_atoms_t, n_unit_cells, layers_dict, print_info
+    )
+    if intrinsic_fault is not None:
+        structures['intrinsic'] = intrinsic_fault
 
-    if 'unstable_removal' in gliding_system:
-        structures['unstable'] = (
-            (
-                build_atoms_from_stacking_removal(
-                    ase_atoms_t, n_unit_cells, gliding_system['unstable_removal'], layers_dict, print_info = print_info,
-                ),
-                gliding_system['unstable_removal']
-            ),
-            'removal'
-            )
-    elif 'unstable_burger_vectors' in gliding_system:
-        if gliding_system['periodicity_unstable_gliding']:
-            structures['unstable'] = [[], 'gliding']
-            for burger_vector in gliding_system['unstable_burger_vectors']:
-                structures['unstable'][0].append(
-                    (
-                        build_atoms_from_burger_vector(
-                            ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info = print_info,
-                        ),
-                        burger_vector
-                    )
-                )
+    unstable_fault = _build_faulted_structure(
+        plane_config.unstable, ase_atoms_t, n_unit_cells, layers_dict, print_info
+    )
+    if unstable_fault is not None:
+        structures['unstable'] = unstable_fault
+
+    extrinsic_fault = _build_faulted_structure(
+        plane_config.extrinsic, ase_atoms_t, n_unit_cells, layers_dict, print_info
+    )
+    if extrinsic_fault is not None:
+        structures['extrinsic'] = extrinsic_fault
 
     return (strukturbericht, structures)
 
+
+def _build_base_structure(
+    structure_type: str,
+    ase_atoms_t,
+    n_unit_cells: int,
+    layers_dict: dict,
+    plane_config: GlidingPlaneConfig,
+    print_info: bool = False,
+):
+    """
+    Build base structures (unfaulted/conventional, cleavaged, twinning).
+    
+    Args:
+        structure_type: Type of structure to build ('unfaulted', 'cleavaged', 'twinning')
+        ase_atoms_t: Transformed atoms structure
+        n_unit_cells: Number of unit cells
+        layers_dict: Dictionary of layers
+        plane_config: GlidingPlaneConfig object
+        print_info: Whether to print debug information
+        
+    Returns:
+        Structure (ASE Atoms object) or None
+    """
+    if structure_type == 'unfaulted':
+        return ase_atoms_t
+    elif structure_type == 'cleavaged':
+        return build_atoms_surface(
+            ase_atoms_t, n_unit_cells, layers_dict, print_info=print_info,
+        )
+    elif structure_type == 'twinning':
+        if plane_config.n_layers > 2:
+            return build_atoms_from_stacking_mirror(
+                ase_atoms_t, n_unit_cells, layers_dict, print_info=print_info,
+            )
+        else:
+            return None
+    else:
+        raise ValueError(f'Unknown base structure type: {structure_type}')
+
+
+def _prepare_structure_data(
+    ase_atoms_conventional,
+    gliding_plane: ty.Optional[str] = None,
+    print_info: bool = False,
+) -> tuple[str, GlidingSystem, GlidingPlaneConfig, dict]:
+    """
+    Prepare common structure data for building faulted and cleavaged structures.
+    This function works on conventional cell, not unit cell.
+    
+    Args:
+        ase_atoms_conventional: ASE Atoms object representing the conventional cell
+        gliding_plane: Gliding plane direction (e.g., '111', '011'). 
+                       If None, uses the default plane from gliding system
+        print_info: Whether to print debug information
+    
+    Returns:
+        Tuple of (strukturbericht, gliding_system, plane_config, layers_dict)
+    """
+    strukturbericht = get_strukturbericht(ase_atoms_conventional)
+    if not strukturbericht:
+        raise ValueError('No match found in the provided list of prototypes.')
+
+    if print_info:
+        print(f'Strukturbericht {strukturbericht} detected')
+    
+    # Get gliding system using new architecture
+    gliding_system = get_gliding_system(strukturbericht)
+    
+    # Use default plane if not provided
+    if not gliding_plane:
+        gliding_plane = gliding_system.default_plane
+    
+    plane_config = gliding_system.get_plane(gliding_plane)
+    
+    # Group layers from conventional structure
+    layers_dict = group_by_layers(ase_atoms_conventional)
+    
+    if len(layers_dict) != plane_config.n_layers:
+        raise ValueError(
+            f'Layer count mismatch: found {len(layers_dict)} layers, but expected {plane_config.n_layers} for '
+            f'{strukturbericht} with gliding plane {gliding_plane}. '
+            'This may indicate wrong initial structure, incorrect structure type, or incorrect transformation matrix.'
+        )
+    
+    return (strukturbericht, gliding_system, plane_config, layers_dict)
+
+
+def get_conventional_structure(
+        ase_atoms_uc,
+        gliding_plane: ty.Optional[str] = None,
+        P: ty.Optional[ty.Union[list, numpy.ndarray]] = None,
+        print_info: bool = False,
+    ) -> tuple[str, Atoms]:
+    """
+    Generate conventional (unfaulted) structure from unit cell structure.
+    This is the only function that converts unit cell to conventional cell.
+    
+    Args:
+        ase_atoms_uc: ASE Atoms object representing the unit cell
+        gliding_plane: Gliding plane direction (e.g., '111', '011'). 
+                       If None, uses the default plane from gliding system
+        P: Transformation matrix. If None, uses the default from gliding system
+        print_info: Whether to print debug information
+        
+    Returns:
+        Tuple of (strukturbericht, conventional_structure)
+    """
+    strukturbericht = get_strukturbericht(ase_atoms_uc)
+    if not strukturbericht:
+        raise ValueError('No match found in the provided list of prototypes.')
+
+    if print_info:
+        print(f'Strukturbericht {strukturbericht} detected')
+    
+    # Get gliding system using new architecture
+    gliding_system = get_gliding_system(strukturbericht)
+    
+    # Use default plane if not provided
+    if not gliding_plane:
+        gliding_plane = gliding_system.default_plane
+    
+    plane_config = gliding_system.get_plane(gliding_plane)
+    
+    # Use provided transformation matrix or default from config
+    if not P:
+        P = plane_config.transformation_matrix
+    else:
+        P = numpy.array(P)
+
+    ase_atoms_conventional = make_supercell(ase_atoms_uc, P)
+    
+    return (strukturbericht, ase_atoms_conventional)
+
+
+def get_cleavaged_structure(
+        ase_atoms_conventional,
+        gliding_plane: ty.Optional[str] = None,
+        n_unit_cells: int = 3,
+        print_info: bool = False,
+    ) -> tuple[str, Atoms]:
+    """
+    Generate cleavaged surface structure from conventional cell structure.
+    
+    Args:
+        ase_atoms_conventional: ASE Atoms object representing the conventional cell
+        gliding_plane: Gliding plane direction (e.g., '111', '011'). 
+                       If None, uses the default plane from gliding system
+        n_unit_cells: Number of unit cells to repeat
+        print_info: Whether to print debug information
+        
+    Returns:
+        Tuple of (strukturbericht, cleavaged_structure)
+    """
+    strukturbericht, _, _, layers_dict = _prepare_structure_data(
+        ase_atoms_conventional, gliding_plane, print_info
+    )
+    
+    cleavaged_structure = build_atoms_surface(
+        ase_atoms_conventional, n_unit_cells, layers_dict, print_info=print_info,
+    )
+    
+    return (strukturbericht, cleavaged_structure)
+
+
+def _build_faulted_structure(
+    fault_config: FaultConfig,
+    ase_atoms_t,
+    n_unit_cells: int,
+    layers_dict: dict,
+    print_info: bool = False,
+):
+    """
+    Build a faulted structure based on the fault configuration.
+    
+    Args:
+        fault_config: FaultConfig object containing fault configuration
+        ase_atoms_t: Transformed atoms structure
+        n_unit_cells: Number of unit cells
+        layers_dict: Dictionary of layers
+        print_info: Whether to print debug information
+        
+    Returns:
+        Tuple of (structure_data, fault_info) or None if not configured
+    """
+    if not fault_config.possible:
+        return None
+    
+    if fault_config.removal_layers is not None:
+        structure = build_atoms_from_stacking_removal(
+            ase_atoms_t, n_unit_cells, fault_config.removal_layers, layers_dict, print_info=print_info
+        )
+        return ((structure, fault_config.removal_layers), 'removal')
+    
+    elif fault_config.burger_vectors is not None:
+        structures_list = []
+        for burger_vector in fault_config.burger_vectors:
+            structure = build_atoms_from_burger_vector(
+                ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info=print_info
+            )
+            structures_list.append((structure, burger_vector))
+        return (structures_list, 'gliding')
+    
+    return None
+
+
+def get_faulted_structure(
+        ase_atoms_conventional,
+        fault_type: str,
+        gliding_plane: ty.Optional[str] = None,
+        n_unit_cells: int = 3,
+        print_info: bool = False,
+    ) -> tuple[str, ty.Optional[tuple]]:
+    """
+    Generate faulted structure of a specific type from conventional cell structure.
+    
+    Args:
+        ase_atoms_conventional: ASE Atoms object representing the conventional cell
+        fault_type: Type of fault to generate ('intrinsic', 'unstable', or 'extrinsic')
+        gliding_plane: Gliding plane direction (e.g., '111', '011'). 
+                       If None, uses the default plane from gliding system
+        n_unit_cells: Number of unit cells to repeat
+        print_info: Whether to print debug information
+        
+    Returns:
+        Tuple of (strukturbericht, fault_structure_data) where fault_structure_data is:
+            - Tuple of (structure_data, fault_info) for the requested fault type
+            - None if the fault type is not available
+    """
+    if fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
+        raise ValueError(f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', got '{fault_type}'")
+
+    strukturbericht, _, plane_config, layers_dict = _prepare_structure_data(
+        ase_atoms_conventional, gliding_plane, print_info
+    )
+
+    # Build the requested faulted structure
+    fault_config = getattr(plane_config, fault_type)
+    faulted_structure = _build_faulted_structure(
+        fault_config, ase_atoms_conventional, n_unit_cells, layers_dict, print_info
+    )
+
+    return (strukturbericht, faulted_structure)
+
+
+@deprecated(reason="This function is not used in any workflow. Use get_unstable_faulted_structure instead.")
 def get_unstable_faulted_structure_and_kpoints_old(
         structure_uc: orm.StructureData,
         kpoints_uc: orm.KpointsData,

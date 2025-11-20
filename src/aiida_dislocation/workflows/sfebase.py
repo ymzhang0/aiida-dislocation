@@ -8,9 +8,16 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
-from aiida_dislocation.tools import get_unstable_faulted_structure, is_primitive_cell, calculate_surface_area
+from aiida_dislocation.tools import (
+    is_primitive_cell, 
+    calculate_surface_area, 
+    get_faulted_structure,
+    get_conventional_structure,
+    get_cleavaged_structure,
+)
 from aiida_quantumespresso.utils.mapping import prepare_process_inputs
 from ase.formula import Formula
+from math import ceil
 
 class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     """SFEBase WorkChain"""
@@ -107,7 +114,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 cls.inspect_relax,
             ),
             cls.setup,
-            cls.generate_faulted_structure,
+            cls.generate_structures,
             if_(cls.should_run_scf)(
                 cls.run_scf,
                 cls.inspect_scf,
@@ -296,22 +303,55 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         if 'current_structure' not in self.ctx:
             self.ctx.current_structure = self.inputs.structure
+
+    def _get_fault_type(self):
+        """Return the fault type for this workchain. Must be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _get_fault_type()")
+
+    def generate_structures(self):
+        """Generate all structures including conventional, cleavaged, and faulted. Common implementation for all subclasses."""
+        fault_type = self._get_fault_type()
+        gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
         
-    def generate_faulted_structure(self):
-        strukturbericht, structures = get_unstable_faulted_structure(
+        # Get conventional structure
+        strukturbericht, conventional_structure = get_conventional_structure(
             self.ctx.current_structure.get_ase(),
-            n_unit_cells=self.inputs.n_repeats.value,
-            gliding_plane=self.inputs.gliding_plane.value,
-            )
+            gliding_plane=gliding_plane,
+        )
         if strukturbericht:
             self.report(f'{strukturbericht} structure is detected.')
         else:
             self.report(f'Strukturbericht can not be detected.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.structures = structures
+        # Get cleavaged structure (based on conventional cell)
+        _, cleavaged_structure = get_cleavaged_structure(
+            conventional_structure,
+            gliding_plane=gliding_plane,
+            n_unit_cells=self.inputs.n_repeats.value,
+        )
 
-        self.ctx.surface_area = calculate_surface_area(self.ctx.structures.unfaulted.cell)
+        # Get faulted structure (based on conventional cell)
+        _, faulted_structure = get_faulted_structure(
+            conventional_structure,
+            fault_type=fault_type,
+            gliding_plane=gliding_plane,
+            n_unit_cells=self.inputs.n_repeats.value,
+        )
+
+        # Verify that the requested fault structure was generated
+        if faulted_structure is None:
+            self.report(f'{fault_type.capitalize()} fault structure is not available for this gliding system.')
+            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
+
+        # Store structures in context
+        self.ctx.structures = AttributeDict({
+            'conventional': conventional_structure,
+            'cleavaged': cleavaged_structure,
+            fault_type: faulted_structure,
+        })
+
+        self.ctx.surface_area = calculate_surface_area(conventional_structure.cell)
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
         
@@ -319,16 +359,100 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         _, unit_cell_multiplier = unit_cell_formula.reduce()
         
         self.ctx.unit_cell_multiplier = unit_cell_multiplier
-        
-        unfaulted_formula = Formula(structures.unfaulted.get_chemical_formula())
-        _, unfaulted_multiplier = unfaulted_formula.reduce()
-        
-        self.ctx.unfaulted_multiplier = unfaulted_multiplier
 
-        surface_formula = Formula(self.ctx.structures.cleavaged.get_chemical_formula())
+        conventional_formula = Formula(conventional_structure.get_chemical_formula())
+        _, conventional_multiplier = conventional_formula.reduce()
+        
+        self.ctx.conventional_multiplier = conventional_multiplier
+
+        surface_formula = Formula(cleavaged_structure.get_chemical_formula())
         _, surface_multiplier = surface_formula.reduce()
         
         self.ctx.surface_multiplier = surface_multiplier
+
+    def _extract_faulted_structure(self, fault_structure_data, fault_type_name):
+        """
+        Extract the actual structure from fault structure data.
+        
+        Args:
+            fault_structure_data: Tuple of (structure_data, fault_type) from get_faulted_structure
+            fault_type_name: Name of the fault type for error messages
+            
+        Returns:
+            Tuple of (actual_structure_ase, multiplier_name) where multiplier_name is like 'intrinsic_multiplier'
+        """
+        fault_structure, fault_type = fault_structure_data
+        
+        # Handle different fault types
+        if fault_type == 'removal':
+            # For removal type, fault_structure is a tuple: (structure, removed_layers)
+            actual_structure = fault_structure[0]
+        elif fault_type == 'gliding':
+            # For gliding type, fault_structure is a list of tuples
+            if not fault_structure:
+                raise ValueError(f'{fault_type_name.capitalize()} gliding structure list is empty')
+            actual_structure = fault_structure[0][0]  # Get first structure from first tuple
+        else:
+            raise ValueError(f'Unknown fault type: {fault_type}')
+        
+        return actual_structure
+
+    def _get_kpoints_scf(self):
+        """Get or create kpoints_scf. Returns kpoints_scf and its mesh."""
+        if 'kpoints_scf' in self.ctx:
+            kpoints_scf = self.ctx.kpoints_scf
+        else:
+            inputs = {
+                'structure': orm.StructureData(
+                    ase=self.ctx.structures.conventional
+                    ),
+                'distance': self.inputs.kpoints_distance,
+                'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
+                'metadata': {
+                    'call_link_label': 'create_kpoints_from_distance'
+                }
+            }
+            kpoints_scf = create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
+        
+        kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
+        return kpoints_scf, kpoints_scf_mesh
+
+    def setup_supercell_kpoints(self):
+        """
+        Setup kpoints for supercell calculations.
+        Common implementation that can be overridden by subclasses if needed.
+        """
+        fault_type = self._get_fault_type()
+        
+        # Get fault structure (guaranteed to exist after generate_structures)
+        fault_structure_data = getattr(self.ctx.structures, fault_type)
+        actual_structure = self._extract_faulted_structure(fault_structure_data, fault_type)
+        
+        current_structure = orm.StructureData(ase=actual_structure)
+        
+        fault_formula = Formula(actual_structure.get_chemical_formula())
+        _, fault_multiplier = fault_formula.reduce()
+        
+        # Store multiplier with fault_type name
+        setattr(self.ctx, f'{fault_type}_multiplier', fault_multiplier)
+        
+        # Get kpoints_scf
+        _, kpoints_scf_mesh = self._get_kpoints_scf()
+        
+        # Calculate kpoints for SFE
+        kpoints_sfe = orm.KpointsData()
+        sfe_z_ratio = actual_structure.cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
+        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / sfe_z_ratio)])
+        
+        # Calculate kpoints for surface energy
+        kpoints_surface_energy = orm.KpointsData()
+        surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
+        kpoints_surface_energy.set_kpoints_mesh(
+            kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
+        
+        self.ctx.kpoints_sfe = kpoints_sfe
+        self.ctx.kpoints_surface_energy = kpoints_surface_energy
+        self.ctx.current_structure = current_structure
 
     def should_run_scf(self):
 
@@ -345,7 +469,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         inputs.metadata.call_link_label = self._SCF_NAMESPACE
 
         inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.structures.unfaulted
+            ase=self.ctx.structures.conventional
             )
 
         inputs.kpoints_distance = self.inputs.kpoints_distance
@@ -378,32 +502,17 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             ).first().node.outputs.result
 
         self.ctx.total_energy_conventional_geometry = workchain.outputs.output_parameters.get('energy')
-        self.report(f"Totel energy of conventional cell [{self.ctx.unfaulted_multiplier} unit cells]: {self.ctx.total_energy_conventional_geometry / self._RY2eV} Ry")
+        self.report(f"Totel energy of conventional cell [{self.ctx.conventional_multiplier} unit cells]: {self.ctx.total_energy_conventional_geometry / self._RY2eV} Ry")
 
         if 'total_energy_unit_cell' in self.ctx:
-            energy_difference = self.ctx.total_energy_conventional_geometry - self.ctx.total_energy_unit_cell / self.ctx.unit_cell_multiplier * self.ctx.unfaulted_multiplier
+            energy_difference = self.ctx.total_energy_conventional_geometry - self.ctx.total_energy_unit_cell / self.ctx.unit_cell_multiplier * self.ctx.conventional_multiplier
             self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
 
     def should_run_sfe(self):
-        if self._SFE_NAMESPACE not in self.inputs:
-            return False
-        else:
-            return True
-    
-    def setup_sfe(self):
-        pass
+        return self._SFE_NAMESPACE in self.inputs
     
     def should_run_surface_energy(self):
-        if self._SURFACE_ENERGY_NAMESPACE in self.inputs:
-            self.report(
-                "We are running surface energy calculation. "
-            )
-            return True
-        else:
-            self.report(
-                "We skip the surface energy calculation. "
-                )
-            return False
+        return self._SURFACE_ENERGY_NAMESPACE in self.inputs
 
     def run_surface_energy(self):
         inputs = AttributeDict(
@@ -452,7 +561,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         # Rice_ratio = self.ctx.USF / SE
         # self.report(f'Rice ratio: {Rice_ratio.value}')
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = total_energy_slab - self.ctx.total_energy_conventional_geometry / self.ctx.unfaulted_multiplier * self.ctx.surface_multiplier
+            energy_difference = total_energy_slab - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.surface_multiplier
             surface_energy = energy_difference / 2 / self.ctx.surface_area * self._eVA22Jm2
             self.report(f'Surface energy evaluated from conventional and unit cell: {surface_energy} J/m^2')
 
