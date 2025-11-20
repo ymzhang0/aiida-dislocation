@@ -1,9 +1,6 @@
 from .sfebase import SFEBaseWorkChain
 from aiida.common import AttributeDict
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
-from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
-from aiida import orm
-from ase.formula import Formula
 
 class ESFEWorkChain(SFEBaseWorkChain):
     """ESFE WorkChain"""
@@ -28,49 +25,9 @@ class ESFEWorkChain(SFEBaseWorkChain):
             message='The `PwBaseWorkChain` for the ESF run failed.',
         )
 
-    def setup_supercell_kpoints(self):
-        ## todo: I don't know why but when running sfe the PwBaseWorkChain
-        ## can't correctly generate the kpoints according to the kpoints_distance.
-        ## I explicitly generate the kpoints here.
-        current_structure = orm.StructureData(
-            ase=self.ctx.structures.extrinsic
-            )
-
-        extrinsic_formula = Formula(self.ctx.structures.extrinsic.get_chemical_formula())
-        _, extrinsic_multiplier = extrinsic_formula.reduce()
-
-        if 'kpoints_scf' in self.ctx:
-            kpoints_scf = self.ctx.kpoints_scf
-        else:
-            inputs = {
-                'structure': orm.StructureData(
-                    ase=self.ctx.structures.unfaulted
-                    ),
-                'distance': self.inputs.kpoints_distance,
-                'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
-                'metadata': {
-                    'call_link_label': 'create_kpoints_from_distance'
-                }
-            }
-            kpoints_scf = create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
-        
-        kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
-
-        from math import ceil
-
-        kpoints_sfe = orm.KpointsData()
-        sfe_z_ratio = self.ctx.structures.extrinsic.cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
-        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / sfe_z_ratio)])
-        
-        kpoints_surface_energy = orm.KpointsData()
-        surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
-        kpoints_surface_energy.set_kpoints_mesh(
-            kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
-        
-        self.ctx.kpoints_sfe = kpoints_sfe
-        self.ctx.kpoints_surface_energy = kpoints_surface_energy
-        self.ctx.current_structure = current_structure
-        self.ctx.extrinsic_multiplier = extrinsic_multiplier
+    def _get_fault_type(self):
+        """Return the fault type for ESFE workchain."""
+        return 'extrinsic'
 
     def run_sfe(self):
 
@@ -113,7 +70,7 @@ class ESFEWorkChain(SFEBaseWorkChain):
         self.ctx.total_energy_esf_geometry = self.ctx.total_energy_faulted_geometry = workchain.outputs.output_parameters.get('energy')
         self.report(f'Total energy of extrinsic faulted geometry [{self.ctx.extrinsic_multiplier} unit cells]: {self.ctx.total_energy_esf_geometry / self._RY2eV} Ry')
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = self.ctx.total_energy_esf_geometry - self.ctx.total_energy_conventional_geometry / self.ctx.unfaulted_multiplier * self.ctx.extrinsic_multiplier
+            energy_difference = self.ctx.total_energy_esf_geometry - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.extrinsic_multiplier
             extrinsic_stacking_fault_energy = energy_difference / self.ctx.surface_area * self._eVA22Jm2
             self.report(f'extrinsic stacking fault energy of evaluated from conventional geometry: {extrinsic_stacking_fault_energy} J/m^2')
         # energy_difference = self.ctx.total_energy_faulted_geometry - self.ctx.total_energy_unit_cell * self.ctx.multiplicity

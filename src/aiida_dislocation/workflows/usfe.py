@@ -1,8 +1,6 @@
 from .sfebase import SFEBaseWorkChain
 from aiida.common import AttributeDict
-
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
-from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida import orm
 from ase.formula import Formula
 
@@ -21,39 +19,40 @@ class USFEWorkChain(SFEBaseWorkChain):
             message='The `PwBaseWorkChain` for the USF run failed.',
         )
 
+    def _get_fault_type(self):
+        """Return the fault type for USFE workchain."""
+        return 'unstable'
+
     def setup_supercell_kpoints(self):
-        ## todo: I don't know why but when running sfe the PwBaseWorkChain
-        ## can't correctly generate the kpoints according to the kpoints_distance.
-        ## I explicitly generate the kpoints here.
-
-        if 'kpoints_scf' in self.ctx:
-            kpoints_scf = self.ctx.kpoints_scf
+        """
+        Setup kpoints for USFE. 
+        Note: current_structure and multiplier are set in should_run_sfe for each iteration.
+        """
+        fault_type = self._get_fault_type()
+        
+        # Get unstable fault structure (guaranteed to exist after generate_structures)
+        unstable_structure, fault_type_enum = self.ctx.structures.unstable
+        
+        # Calculate z_ratio for kpoints (need to handle different fault types)
+        if fault_type_enum == 'gliding':
+            sfe_z_ratio = unstable_structure[0][0].cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
+        elif fault_type_enum == 'removal':
+            sfe_z_ratio = unstable_structure[0].cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
         else:
-            inputs = {
-                'structure': orm.StructureData(
-                    ase=self.ctx.structures.unfaulted
-                    ),
-                'distance': self.inputs.kpoints_distance,
-                'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
-                'metadata': {
-                    'call_link_label': 'create_kpoints_from_distance'
-                }
-            }
-            kpoints_scf = create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
+            raise ValueError(f'Unknown fault type: {fault_type_enum}')
+        
+        # Get kpoints_scf
+        _, kpoints_scf_mesh = self._get_kpoints_scf()
+        
         from math import ceil
-        kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
-
-        unstable_structure, fault_type = self.ctx.structures.unstable
-        if fault_type == 'gliding':
-            sfe_z_ratio = unstable_structure[0][0].cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
-        if fault_type == 'removal':
-            sfe_z_ratio = unstable_structure[0].cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
-
+        
+        # Calculate kpoints for SFE
         kpoints_sfe = orm.KpointsData()
         kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / sfe_z_ratio)])
         
+        # Calculate kpoints for surface energy
         kpoints_surface_energy = orm.KpointsData()
-        surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.unfaulted.cell.cellpar()[2]
+        surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
         kpoints_surface_energy.set_kpoints_mesh(
             kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
         
@@ -64,6 +63,11 @@ class USFEWorkChain(SFEBaseWorkChain):
         run_sfe = super().should_run_sfe()
 
         if not run_sfe:
+            return False
+        
+        # Check if unstable fault structure is available (should exist after generate_structures)
+        if not hasattr(self.ctx.structures, 'unstable') or self.ctx.structures.unstable is None:
+            self.report('Unstable fault structure is not available. Skipping USFE calculation.')
             return False
         
         unstable_structure, fault_type = self.ctx.structures.unstable
@@ -135,6 +139,6 @@ class USFEWorkChain(SFEBaseWorkChain):
         self.report(f'Total energy of unstable faulted geometry [{self.ctx.unstable_multiplier} unit cells]: {self.ctx.total_energy_usf_geometry / self._RY2eV} Ry')
         
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = self.ctx.total_energy_usf_geometry - self.ctx.total_energy_conventional_geometry / self.ctx.unfaulted_multiplier * self.ctx.unstable_multiplier
+            energy_difference = self.ctx.total_energy_usf_geometry - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.unstable_multiplier
             unstable_stacking_fault_energy = energy_difference / self.ctx.surface_area * self._eVA22Jm2
             self.report(f'unstable stacking fault energy of evaluated from conventional geometry: {unstable_stacking_fault_energy} J/m^2')
