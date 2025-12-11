@@ -18,6 +18,7 @@ from aiida_dislocation.tools import (
 from aiida_quantumespresso.utils.mapping import prepare_process_inputs
 from ase.formula import Formula
 from math import ceil
+import numpy
 
 class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     """SFEBase WorkChain"""
@@ -77,10 +78,10 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         )
 
         spec.expose_inputs(
-            PwBaseWorkChain,
+            PwRelaxWorkChain,
             namespace=cls._SFE_NAMESPACE,
             exclude=(
-                'pw.structure',
+                'structure',
                 'clean_workdir',
                 'kpoints',
                 'kpoints_distance'
@@ -113,14 +114,14 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 cls.run_relax,
                 cls.inspect_relax,
             ),
-            cls.setup,
             cls.generate_structures,
+            cls.setup,
             if_(cls.should_run_scf)(
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            cls.setup_supercell_kpoints,
             while_(cls.should_run_sfe)(
+                cls.setup_supercell_kpoints,
                 cls.run_sfe,
                 cls.inspect_sfe,
             ),
@@ -148,7 +149,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         )
 
         spec.expose_outputs(
-            PwBaseWorkChain,
+            PwRelaxWorkChain,
             namespace=cls._SFE_NAMESPACE,
             namespace_options={
                 'required': False,
@@ -222,11 +223,11 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         for namespace, workchain_type in [
             (cls._RELAX_NAMESPACE, PwRelaxWorkChain),
             (cls._SCF_NAMESPACE, PwBaseWorkChain),
-            (cls._SFE_NAMESPACE, PwBaseWorkChain),
+            (cls._SFE_NAMESPACE, PwRelaxWorkChain),
             (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             overrides = inputs.get(namespace, {})
-            if namespace == cls._RELAX_NAMESPACE:
+            if workchain_type == PwRelaxWorkChain:
                 overrides['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
                 overrides['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
@@ -235,7 +236,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 *args,
                 overrides=overrides,
             )
-            sub_builder.pop('structure', None)
+            # sub_builder.pop('structure', None)
             sub_builder.pop('clean_workdir', None)
 
             if namespace != cls._RELAX_NAMESPACE:
@@ -247,6 +248,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
         builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
         builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
+        builder[cls._SFE_NAMESPACE].pop('base_init_relax', None)
 
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
@@ -299,18 +301,17 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         self.ctx.total_energy_unit_cell = workchain.outputs.output_parameters.get('energy')
         self.report(f"Totel energy of unit cell after relaxation: {self.ctx.total_energy_unit_cell / self._RY2eV} Ry")
 
-    def setup(self):
-
-        if 'current_structure' not in self.ctx:
-            self.ctx.current_structure = self.inputs.structure
-
     def _get_fault_type(self):
         """Return the fault type for this workchain. Must be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement _get_fault_type()")
 
     def generate_structures(self):
-        """Generate all structures including conventional, cleavaged, and faulted. Common implementation for all subclasses."""
-        fault_type = self._get_fault_type()
+        """Generate base structures (conventional and cleavaged). 
+        Subclasses should override generate_faulted_structure() to generate faulted structures."""
+        
+        if 'current_structure' not in self.ctx:
+            self.ctx.current_structure = self.inputs.structure
+            
         gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
         
         # Get conventional structure
@@ -331,25 +332,9 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             n_unit_cells=self.inputs.n_repeats.value,
         )
 
-        # Get faulted structure (based on conventional cell)
-        _, faulted_structure = get_faulted_structure(
-            conventional_structure,
-            fault_type=fault_type,
-            gliding_plane=gliding_plane,
-            n_unit_cells=self.inputs.n_repeats.value,
-        )
-
-        # Verify that the requested fault structure was generated
-        if faulted_structure is None:
-            self.report(f'{fault_type.capitalize()} fault structure is not available for this gliding system.')
-            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
-
-        # Store structures in context
-        self.ctx.structures = AttributeDict({
-            'conventional': conventional_structure,
-            'cleavaged': cleavaged_structure,
-            fault_type: faulted_structure,
-        })
+        # Store structures directly in context
+        self.ctx.conventional_structure = conventional_structure
+        self.ctx.cleavaged_structure = cleavaged_structure
 
         self.ctx.surface_area = calculate_surface_area(conventional_structure.cell)
         
@@ -370,33 +355,6 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         
         self.ctx.surface_multiplier = surface_multiplier
 
-    def _extract_faulted_structure(self, fault_structure_data, fault_type_name):
-        """
-        Extract the actual structure from fault structure data.
-        
-        Args:
-            fault_structure_data: Tuple of (structure_data, fault_type) from get_faulted_structure
-            fault_type_name: Name of the fault type for error messages
-            
-        Returns:
-            Tuple of (actual_structure_ase, multiplier_name) where multiplier_name is like 'intrinsic_multiplier'
-        """
-        fault_structure, fault_type = fault_structure_data
-        
-        # Handle different fault types
-        if fault_type == 'removal':
-            # For removal type, fault_structure is a tuple: (structure, removed_layers)
-            actual_structure = fault_structure[0]
-        elif fault_type == 'gliding':
-            # For gliding type, fault_structure is a list of tuples
-            if not fault_structure:
-                raise ValueError(f'{fault_type_name.capitalize()} gliding structure list is empty')
-            actual_structure = fault_structure[0][0]  # Get first structure from first tuple
-        else:
-            raise ValueError(f'Unknown fault type: {fault_type}')
-        
-        return actual_structure
-
     def _get_kpoints_scf(self):
         """Get or create kpoints_scf. Returns kpoints_scf and its mesh."""
         if 'kpoints_scf' in self.ctx:
@@ -404,7 +362,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         else:
             inputs = {
                 'structure': orm.StructureData(
-                    ase=self.ctx.structures.conventional
+                    ase=self.ctx.conventional_structure
                     ),
                 'distance': self.inputs.kpoints_distance,
                 'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
@@ -417,42 +375,40 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
         return kpoints_scf, kpoints_scf_mesh
 
-    def setup_supercell_kpoints(self):
+    def setup(self):
         """
         Setup kpoints for supercell calculations.
         Common implementation that can be overridden by subclasses if needed.
         """
+        # Get fault structure (should be set by generate_faulted_structure in subclasses)
         fault_type = self._get_fault_type()
+        fault_structure_attr = f'{fault_type}_structure'
         
-        # Get fault structure (guaranteed to exist after generate_structures)
-        fault_structure_data = getattr(self.ctx.structures, fault_type)
-        actual_structure = self._extract_faulted_structure(fault_structure_data, fault_type)
+        # if not hasattr(self.ctx, fault_structure_attr):
+        #     raise ValueError(f'{fault_type.capitalize()} fault structure not found in context. '
+        #                    f'Make sure generate_faulted_structure() was called.')
         
-        current_structure = orm.StructureData(ase=actual_structure)
+        # actual_structure = getattr(self.ctx, fault_structure_attr)
         
-        fault_formula = Formula(actual_structure.get_chemical_formula())
-        _, fault_multiplier = fault_formula.reduce()
+        # current_structure = orm.StructureData(ase=actual_structure)
+        
+        # fault_formula = Formula(actual_structure.get_chemical_formula())
+        # _, fault_multiplier = fault_formula.reduce()
         
         # Store multiplier with fault_type name
-        setattr(self.ctx, f'{fault_type}_multiplier', fault_multiplier)
+        # setattr(self.ctx, f'{fault_type}_multiplier', fault_multiplier)
         
         # Get kpoints_scf
         _, kpoints_scf_mesh = self._get_kpoints_scf()
         
-        # Calculate kpoints for SFE
-        kpoints_sfe = orm.KpointsData()
-        sfe_z_ratio = actual_structure.cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
-        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / sfe_z_ratio)])
-        
         # Calculate kpoints for surface energy
         kpoints_surface_energy = orm.KpointsData()
-        surface_energy_z_ratio = self.ctx.structures.cleavaged.cell.cellpar()[2] / self.ctx.structures.conventional.cell.cellpar()[2]
+        surface_energy_z_ratio = self.ctx.cleavaged_structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
         kpoints_surface_energy.set_kpoints_mesh(
             kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
         
-        self.ctx.kpoints_sfe = kpoints_sfe
         self.ctx.kpoints_surface_energy = kpoints_surface_energy
-        self.ctx.current_structure = current_structure
+        # self.ctx.current_structure = current_structure
 
     def should_run_scf(self):
 
@@ -469,7 +425,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         inputs.metadata.call_link_label = self._SCF_NAMESPACE
 
         inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.structures.conventional
+            ase=self.ctx.conventional_structure
             )
 
         inputs.kpoints_distance = self.inputs.kpoints_distance
@@ -477,7 +433,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} conventional geometry.')
 
-        self.to_context(workchain_scf = running)
+        return {f"workchain_scf": running}
 
     def inspect_scf(self):
         """Verify that the `PwBaseWorkChain` for the scf run successfully finished."""
@@ -508,9 +464,33 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             energy_difference = self.ctx.total_energy_conventional_geometry - self.ctx.total_energy_unit_cell / self.ctx.unit_cell_multiplier * self.ctx.conventional_multiplier
             self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
 
-    def should_run_sfe(self):
-        return self._SFE_NAMESPACE in self.inputs
-    
+    def run_sfe(self):
+
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwRelaxWorkChain,
+                namespace=self._SFE_NAMESPACE
+                )
+            )
+
+        inputs.structure = self.ctx.current_structure
+        inputs.base_relax.kpoints = self.ctx.kpoints_sfe
+
+        settings = inputs.base_relax.pw.settings.get_dict()
+        settings['USE_FRACTIONAL'] = True
+
+        FIXED_COORDS = numpy.full_like( 
+            self.ctx.current_structure.get_ase().get_positions(),
+            fill_value=True,
+            dtype=bool
+            )
+            
+        settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
+
+        inputs.base_relax.pw.settings = orm.Dict(settings)
+
+        return inputs
+
     def should_run_surface_energy(self):
         return self._SURFACE_ENERGY_NAMESPACE in self.inputs
 
@@ -521,17 +501,18 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
                 namespace=self._SURFACE_ENERGY_NAMESPACE
                 )
             )
+
         inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
 
         inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.structures.cleavaged
+            ase=self.ctx.cleavaged_structure
             )
         inputs.kpoints = self.ctx.kpoints_surface_energy
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
 
-        self.to_context(workchain_surface_energy = running)
+        return {f"workchain_surface_energy": running}
 
     def inspect_surface_energy(self):
 

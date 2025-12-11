@@ -15,9 +15,12 @@ default_inputs:
             withmpi: True
 
   isfe:
-    pw:
-      metadata:
-        options:
+    base_relax:
+      pw:
+        settings:
+          USE_FRACTIONAL: True
+        metadata:
+          options:
             withmpi: True
 
   surface_energy:

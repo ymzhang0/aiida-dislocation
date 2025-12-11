@@ -1,6 +1,12 @@
 default_inputs:
   clean_workdir: True
   kpoints_distance: 0.3
+  additional_spacings: 
+    - -0.004
+    - -0.002
+    - 0.000
+    - 0.002
+    - 0.004
   relax:
     base_relax:
       pw:
@@ -15,9 +21,12 @@ default_inputs:
             withmpi: True
 
   usfe:
-    pw:
-      metadata:
-        options:
+    base_relax:
+      pw:
+        settings:
+          USE_FRACTIONAL: True
+        metadata:
+          options:
             withmpi: True
 
   surface_energy:

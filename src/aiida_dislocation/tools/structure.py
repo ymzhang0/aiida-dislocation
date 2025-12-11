@@ -45,6 +45,7 @@ class FaultConfig:
     burger_vectors: ty.Optional[list[list[float]]] = None
     periodicity: bool = False
     possible: bool = True
+    interface: int = 0
 
 
 @dataclass
@@ -100,6 +101,7 @@ class A1GlidingSystem(GlidingSystem):
             extrinsic=FaultConfig(possible=False),
             unstable=FaultConfig(
                 possible=True,
+                interface=2,
                 burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]]
             )
         )
@@ -111,7 +113,8 @@ class A1GlidingSystem(GlidingSystem):
                 possible=True,
                 removal_layers=[3],
                 burger_vectors=[[0, 1/3, 0]],
-                periodicity=False
+                periodicity=False,
+                interface=3,
             ),
             extrinsic=FaultConfig(
                 possible=True,
@@ -122,7 +125,8 @@ class A1GlidingSystem(GlidingSystem):
                 possible=True,
                 removal_layers=[3, 4],
                 burger_vectors=[[0, 2/3, 0]],
-                periodicity=False
+                periodicity=False,
+                interface=3,
             )
         )
 
@@ -142,11 +146,10 @@ class A2GlidingSystem(GlidingSystem):
             transformation_matrix=[[-1, 1, 0], [-1, 0, 1], [1, 1, 1]],
             transformation_matrix_c=[[-2, 1, 1], [0, -1, 1], [2, 2, 2]],
             n_layers=3,
-            intrinsic=FaultConfig(removal_layers=[3]),
+            intrinsic=FaultConfig(removal_layers=[3], interface=3),
             extrinsic=FaultConfig(removal_layers=[3, 5]),
-            unstable=FaultConfig(removal_layers=[3, 4])
+            unstable=FaultConfig(removal_layers=[3, 4], interface=3)
         )
-
 
 class B1GlidingSystem(GlidingSystem):
     """B1 (NaCl) gliding system."""
@@ -156,17 +159,17 @@ class B1GlidingSystem(GlidingSystem):
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
             n_layers=2,
             unstable=FaultConfig(
-                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]]
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
+                interface=2,
             )
         )
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
             transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
             n_layers=6,
-            intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9]),
-            unstable=FaultConfig(removal_layers=[6, 7])
+            intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9], interface=6),
+            unstable=FaultConfig(removal_layers=[6, 7], interface=6)
         )
-
 
 class C1bGlidingSystem(GlidingSystem):
     """C1b (Half-Heusler) gliding system."""
@@ -187,7 +190,6 @@ class C1bGlidingSystem(GlidingSystem):
             unstable=FaultConfig(removal_layers=[10, 11, 12])
         )
 
-
 class E21GlidingSystem(GlidingSystem):
     """E21 (Perovskite) gliding system."""
     
@@ -204,7 +206,6 @@ class E21GlidingSystem(GlidingSystem):
             intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9]),
             unstable=FaultConfig(removal_layers=[6, 7])
         )
-
 
 # Registry for gliding systems
 _GLIDING_SYSTEM_REGISTRY: dict[str, type[GlidingSystem]] = {
@@ -645,6 +646,7 @@ def build_atoms_from_stacking_removal(
     n_unit_cells,
     removed_layers,
     layers_dict,
+    additional_spacing = (0, 0.0),
     print_info = False,
     ):
 
@@ -659,21 +661,29 @@ def build_atoms_from_stacking_removal(
             f"(number of layers in stacking order)"
         )
 
-    zs = [value['z']/n_unit_cells + layer/n_unit_cells for layer in range(n_unit_cells) for value in layers_dict.values()]
+    zs = numpy.array([value['z']/n_unit_cells + layer/n_unit_cells for layer in range(n_unit_cells) for value in layers_dict.values()])
 
+    removed_layers_sorted = sorted(set(removed_layers))
     removed_spacing = 0.0
-    faulted_stacking = "".join([char for i, char in enumerate(stacking_order) if i not in removed_layers])
+    faulted_stacking = "".join([char for i, char in enumerate(stacking_order) if i not in removed_layers_sorted])
 
-    for removed_layer in removed_layers:
+    # Remove layers from the end to avoid index shifts while updating zs
+    for removed_layer in reversed(removed_layers_sorted):
         spacing = zs[removed_layer] - zs[removed_layer - 1]
+        if spacing < additional_spacing[1]:
+            raise ValueError(f"Spacing between removed layers is less than additional spacing: {spacing} < {additional_spacing}")
         removed_spacing += spacing
-        for z in zs[removed_layer:]:
-            z -= spacing
+        zs[removed_layer:] -= spacing
+        zs = numpy.delete(zs, removed_layer)
 
-    for _ in range(len(removed_layers)):
-        zs.pop()
+    # Apply additional spacing if requested
+    if additional_spacing[0] >= len(zs):
+        raise ValueError(f"additional_spacing layer index {additional_spacing[0]} is out of bounds for remaining layers {len(zs)}")
+    if additional_spacing[1] != 0.0:
+        zs[additional_spacing[0]:] += additional_spacing[1]
+        removed_spacing -= additional_spacing[1]
 
-    zs = [z / (1-removed_spacing) for z in zs]
+    zs /= (1-removed_spacing)
     if print_info:
         print(zs)
         print(faulted_stacking)
@@ -1041,7 +1051,6 @@ def get_unstable_faulted_structure(
 
     return (strukturbericht, structures)
 
-
 def _build_base_structure(
     structure_type: str,
     ase_atoms_t,
@@ -1133,7 +1142,7 @@ def get_conventional_structure(
         gliding_plane: ty.Optional[str] = None,
         P: ty.Optional[ty.Union[list, numpy.ndarray]] = None,
         print_info: bool = False,
-    ) -> tuple[str, Atoms]:
+) -> tuple[str, Atoms]:
     """
     Generate conventional (unfaulted) structure from unit cell structure.
     This is the only function that converts unit cell to conventional cell.
@@ -1205,13 +1214,27 @@ def get_cleavaged_structure(
     return (strukturbericht, cleavaged_structure)
 
 
+class FaultedStructureEntry(ty.TypedDict, total=False):
+    """Container for a single faulted structure variant."""
+    structure: Atoms
+    layers: list[int]  # only for removal faults
+    burger_vector: list[float]  # only for gliding faults
+
+
+class FaultedStructureResult(ty.TypedDict):
+    """Normalized return type for faulted structures."""
+    mode: ty.Literal['removal', 'gliding']
+    structures: list[FaultedStructureEntry]
+
+
 def _build_faulted_structure(
     fault_config: FaultConfig,
     ase_atoms_t,
     n_unit_cells: int,
     layers_dict: dict,
+    additional_spacing = 0.0,
     print_info: bool = False,
-):
+) -> ty.Optional[FaultedStructureResult]:
     """
     Build a faulted structure based on the fault configuration.
     
@@ -1223,36 +1246,50 @@ def _build_faulted_structure(
         print_info: Whether to print debug information
         
     Returns:
-        Tuple of (structure_data, fault_info) or None if not configured
+        FaultedStructureResult dictionary or None if not configured
     """
     if not fault_config.possible:
         return None
     
     if fault_config.removal_layers is not None:
         structure = build_atoms_from_stacking_removal(
-            ase_atoms_t, n_unit_cells, fault_config.removal_layers, layers_dict, print_info=print_info
+            ase_atoms_t, n_unit_cells, fault_config.removal_layers, layers_dict, additional_spacing=(fault_config.interface, additional_spacing), print_info=print_info
         )
-        return ((structure, fault_config.removal_layers), 'removal')
+        return {
+            'mode': 'removal',
+            'structures': [{
+                'structure': structure,
+                'layers': fault_config.removal_layers,
+            }],
+        }
     
     elif fault_config.burger_vectors is not None:
-        structures_list = []
+        structures_list: list[FaultedStructureEntry] = []
         for burger_vector in fault_config.burger_vectors:
             structure = build_atoms_from_burger_vector(
                 ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info=print_info
             )
-            structures_list.append((structure, burger_vector))
-        return (structures_list, 'gliding')
+            structures_list.append(
+                {
+                    'structure': structure,
+                    'burger_vector': burger_vector,
+                }
+            )
+        return {
+            'mode': 'gliding',
+            'structures': structures_list,
+        }
     
     return None
-
 
 def get_faulted_structure(
         ase_atoms_conventional,
         fault_type: str,
+        additional_spacing: float,
         gliding_plane: ty.Optional[str] = None,
         n_unit_cells: int = 3,
         print_info: bool = False,
-    ) -> tuple[str, ty.Optional[tuple]]:
+    ) -> tuple[str, ty.Optional[FaultedStructureResult]]:
     """
     Generate faulted structure of a specific type from conventional cell structure.
     
@@ -1266,7 +1303,9 @@ def get_faulted_structure(
         
     Returns:
         Tuple of (strukturbericht, fault_structure_data) where fault_structure_data is:
-            - Tuple of (structure_data, fault_info) for the requested fault type
+            - FaultedStructureResult dict with keys:
+                * mode: 'removal' or 'gliding'
+                * structures: list of entries with structure plus metadata
             - None if the fault type is not available
     """
     if fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
@@ -1279,11 +1318,10 @@ def get_faulted_structure(
     # Build the requested faulted structure
     fault_config = getattr(plane_config, fault_type)
     faulted_structure = _build_faulted_structure(
-        fault_config, ase_atoms_conventional, n_unit_cells, layers_dict, print_info
+        fault_config, ase_atoms_conventional, n_unit_cells, layers_dict, additional_spacing=additional_spacing, print_info=print_info
     )
 
     return (strukturbericht, faulted_structure)
-
 
 @deprecated(reason="This function is not used in any workflow. Use get_unstable_faulted_structure instead.")
 def get_unstable_faulted_structure_and_kpoints_old(
