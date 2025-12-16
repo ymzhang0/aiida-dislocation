@@ -5,8 +5,14 @@ Docs: https://docs.pytest.org/en/stable/how-to/fixtures.html#conftest-py-sharing
 
 import pytest
 
-# Load AiiDA test fixtures
-pytest_plugins = ['aiida.manage.tests.pytest_fixtures']
+# Try to load AiiDA test fixtures, but don't fail if pgtest is not available
+try:
+    import pgtest  # noqa: F401
+    pytest_plugins = ['aiida.manage.tests.pytest_fixtures']
+except ImportError:
+    # If pgtest is not available, we'll skip tests that require a database
+    # For simple builder tests, we don't need the full AiiDA test environment
+    pass
 
 from aiida.orm import CalcJobNode, Dict
 
