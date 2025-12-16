@@ -24,6 +24,7 @@ from .mixins import (
     KpointsSetupMixin,
     WorkflowInspectionMixin,
 )
+from .sfe_spacing import SfeSpacingWorkChain
 
 
 class SFEBaseWorkChain(
@@ -133,10 +134,9 @@ class SFEBaseWorkChain(
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            while_(cls.should_run_sfe)(
-                cls.setup_supercell_kpoints,
-                cls.run_sfe,
-                cls.inspect_sfe,
+            if_(cls.should_run_sfe)(
+                cls.run_sfe_spacing,
+                cls.inspect_sfe_spacing,
             ),
             if_(cls.should_run_surface_energy)(
                 cls.run_surface_energy,
@@ -196,6 +196,11 @@ class SFEBaseWorkChain(
             405,
             "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
             message='The `PwBaseWorkChain` for the surface energy calculation failed.',
+        )
+        spec.exit_code(
+            406,
+            "ERROR_SUB_PROCESS_FAILED_SFE_SPACING",
+            message='The `SfeSpacingWorkChain` for the SFE calculations failed.',
         )
 
     @classmethod
@@ -485,31 +490,102 @@ class SFEBaseWorkChain(
                 f'{energy_difference / self._RY2eV} Ry'
             )
 
-    def run_sfe(self):
-
+    def should_run_sfe(self):
+        """Check if SFE calculation should run.
+        
+        Subclasses should override this to provide their specific logic.
+        Default implementation checks if SFE namespace is in inputs.
+        """
+        return self._SFE_NAMESPACE in self.inputs
+    
+    def run_sfe_spacing(self):
+        """Run SFE spacing workchain to loop over all additional_spacings.
+        
+        This method calls SfeSpacingWorkChain which handles the entire loop
+        over additional_spacings. Subclasses can override this to customize inputs.
+        """
+        # Get kpoints_scf_mesh for passing to sub-workchain
+        _, kpoints_scf_mesh = self._get_kpoints_scf()
+        
+        # Prepare inputs for SfeSpacingWorkChain
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwRelaxWorkChain,
                 namespace=self._SFE_NAMESPACE
+            )
+        )
+        
+        # Get workchain type (default to PwRelaxWorkChain, but can be overridden)
+        if hasattr(self, '_get_sfe_workchain_type'):
+            workchain_type = self._get_sfe_workchain_type()
+        else:
+            workchain_type = 'PwRelaxWorkChain'
+        
+        # Get fault type from subclass
+        fault_type = self._get_fault_type()
+        
+        # Prepare inputs for SfeSpacingWorkChain
+        sfe_inputs = {
+            'conventional_structure': orm.StructureData(ase=self.ctx.conventional_structure),
+            'additional_spacings': getattr(self.inputs, 'additional_spacings', orm.List(list=[0.0])),
+            'fault_type': orm.Str(fault_type),
+            'fault_method': getattr(self.inputs, 'fault_method', orm.Str('removal')),
+            'vacuum_ratio': getattr(self.inputs, 'vacuum_ratio', orm.Float(0.1)),
+            'gliding_plane': getattr(self.inputs, 'gliding_plane', orm.Str('')),
+            'n_repeats': self.inputs.n_repeats,
+            'kpoints_scf_mesh': orm.List(list=kpoints_scf_mesh),
+            'workchain_type': orm.Str(workchain_type),
+        }
+        
+        # Expose workchain inputs to SfeSpacingWorkChain
+        if workchain_type == 'PwRelaxWorkChain':
+            sfe_inputs[self._SFE_NAMESPACE] = inputs
+        else:
+            # For PwBaseWorkChain, expose base inputs
+            base_inputs = AttributeDict(
+                self.exposed_inputs(
+                    PwBaseWorkChain,
+                    namespace=self._SFE_NAMESPACE
                 )
             )
-
-        inputs.structure = self.ctx.current_structure
-        inputs.base_relax.kpoints = self.ctx.kpoints_sfe
-        settings = inputs.base_relax.pw.settings.get_dict()
-        settings['USE_FRACTIONAL'] = True
-
-        FIXED_COORDS = numpy.full_like( 
-            self.ctx.current_structure.get_ase().get_positions(),
-            fill_value=True,
-            dtype=bool
+            sfe_inputs[f'{self._SFE_NAMESPACE}_base'] = base_inputs
+        
+        running = self.submit(SfeSpacingWorkChain, **sfe_inputs)
+        self.report(f'launching SfeSpacingWorkChain<{running.pk}> for SFE calculations over all spacings.')
+        
+        return ToContext(workchain_sfe=running)
+    
+    def inspect_sfe_spacing(self):
+        """Inspect the SfeSpacingWorkChain results.
+        
+        Subclasses should override this to extract and process results
+        according to their specific needs.
+        """
+        workchain = self.ctx.workchain_sfe
+        
+        if not workchain.is_finished_ok:
+            self.report(
+                f"SfeSpacingWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}"
             )
-
-        settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
-
-        inputs.base_relax.pw.settings = orm.Dict(settings)
-
-        return inputs
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SFE_SPACING
+        
+        self.report(f'SfeSpacingWorkChain<{workchain.pk}> finished successfully.')
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                SfeSpacingWorkChain,
+                namespace=self._SFE_NAMESPACE
+            )
+        )
+    
+    def _get_sfe_workchain_type(self):
+        """Return the workchain type to use for SFE calculation.
+        
+        Can be overridden by subclasses. Default is 'PwRelaxWorkChain'.
+        """
+        return 'PwRelaxWorkChain'
 
     def should_run_surface_energy(self):
         return self._SURFACE_ENERGY_NAMESPACE in self.inputs

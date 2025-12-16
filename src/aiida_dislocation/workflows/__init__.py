@@ -13,6 +13,9 @@ from .twinning import (
 from .gsfe import (
     GSFEWorkChain,
 )
+from .sfe_spacing import (
+    SfeSpacingWorkChain,
+)
 
 __all__ = (
     'ISFEWorkChain',
@@ -20,4 +23,5 @@ __all__ = (
     'USFEWorkChain',
     'TwinningWorkChain',
     'GSFEWorkChain',
+    'SfeSpacingWorkChain',
 )

@@ -4,6 +4,10 @@ Docs: https://docs.pytest.org/en/stable/how-to/fixtures.html#conftest-py-sharing
 """
 
 import pytest
+
+# Load AiiDA test fixtures
+pytest_plugins = ['aiida.manage.tests.pytest_fixtures']
+
 from aiida.orm import CalcJobNode, Dict
 
 

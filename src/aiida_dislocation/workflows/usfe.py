@@ -1,13 +1,6 @@
 from .sfebase import SFEBaseWorkChain
-from aiida.common import AttributeDict
-from aiida.engine import append_
-from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
-from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
+from .sfe_spacing import SfeSpacingWorkChain
 from aiida import orm
-from ase.formula import Formula
-from aiida_dislocation.tools import get_faulted_structure
-from math import ceil
-import numpy
 
 class USFEWorkChain(SFEBaseWorkChain):
     """USFE WorkChain"""
@@ -55,158 +48,57 @@ class USFEWorkChain(SFEBaseWorkChain):
 
     def setup(self):
         super().setup()
-        self.ctx.iteration = 1
-        self.ctx.additional_spacings = self.inputs.additional_spacings.get_list()
-        self.ctx.usfe_data = []
-
-
-    def setup_supercell_kpoints(self):
-        """
-        Setup kpoints for USFE.
-        Note: current_structure and multiplier are set in should_run_sfe for each iteration.
-        """
-        if not hasattr(self.ctx, 'current_structure'):
-            raise ValueError('Current structure not found in context.')
-
-        # Get kpoints_scf
+        # Setup surface energy kpoints (only needs to be done once)
         _, kpoints_scf_mesh = self._get_kpoints_scf()
-
-        # Calculate kpoints for SFE using helper method
-        current_structure_ase = self.ctx.current_structure.get_ase()
-        self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
-            current_structure_ase,
-            kpoints_scf_mesh
-        )
-
-        # Calculate kpoints for surface energy using helper method
         self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf_mesh)
 
-    def should_run_sfe(self):
-
-        if not self._SFE_NAMESPACE in self.inputs:
-            return False
-
-        fault_method = self.inputs.fault_method.value.lower() if self.inputs.fault_method.value else 'auto'
-
-        fault_type = self._get_fault_type()
-        gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
-
-        if self.ctx.additional_spacings == []:
-            return False
-
-        current_spacing = self.ctx.additional_spacings.pop(0)
-        self.ctx.current_spacing = current_spacing
-
-        if fault_method == 'removal':        # Respect user-provided order of spacings instead of reversing it
-            # Get faulted structure (based on conventional cell)
-            _, faulted_structure_data = get_faulted_structure(
-                self.ctx.conventional_structure,
-                fault_type=fault_type,
-                additional_spacing=current_spacing,
-                gliding_plane=gliding_plane,
-                n_unit_cells=self.inputs.n_repeats.value,
-                fault_mode='removal',
+    def inspect_sfe_spacing(self):
+        """Inspect the SfeSpacingWorkChain results and calculate USFE values."""
+        workchain = self.ctx.workchain_sfe
+        
+        if not workchain.is_finished_ok:
+            self.report(
+                f"SfeSpacingWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}"
             )
-        elif fault_method == 'vacuum':
-            vacuum_ratio = float(self.inputs.vacuum_ratio.value)
-            _, faulted_structure_data = get_faulted_structure(
-                self.ctx.conventional_structure,
-                fault_type=fault_type,
-                additional_spacing=current_spacing,
-                gliding_plane=gliding_plane,
-                n_unit_cells=self.inputs.n_repeats.value,
-                fault_mode='vacuum',
-                vacuum_ratio=vacuum_ratio,
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
+        
+        self.report(f'SfeSpacingWorkChain<{workchain.pk}> finished successfully.')
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                SfeSpacingWorkChain,
+                namespace=self._SFE_NAMESPACE
             )
-
-        else:
-            raise ValueError(f"Unsupported fault method: {fault_method}")
-        
-        # Validate using helper method
-        is_valid, _ = self._validate_faulted_structure(faulted_structure_data, fault_type)
-        if not is_valid:
-            return False
-
-        # Extract structure
-        actual_structure = faulted_structure_data['structures'][0].get('structure')
-
-        # Store the ASE atoms object for later use
-        self.ctx.current_structure_ase = actual_structure
-        # Create StructureData from the ASE atoms object
-        self.ctx.current_structure = orm.StructureData(ase=actual_structure)
-
-        # Calculate multiplier using helper method
-        self.ctx.unstable_multiplier = self._calculate_structure_multiplier(actual_structure)
-
-        return True
-        
-    def run_sfe(self):
-        inputs = super().run_sfe()
-
-        inputs.structure = self.ctx.current_structure
-        inputs.base_relax.kpoints = self.ctx.kpoints_sfe
-        inputs.metadata.call_link_label = f'usfe_{self.ctx.iteration}'
-        fault_method = self.inputs.fault_method.value.lower() if self.inputs.fault_method.value else 'auto'
-        parameters = inputs.base_relax.pw.parameters.get_dict()
-
-        if fault_method == 'vacuum':
-            parameters['CELL']['cell_dofree'] = 'fixc'
-        
-        if 'nbnd' in self.ctx:
-            parameters['SYSTEM']['nbnd'] = int(self.ctx.nbnd)
-        
-        inputs.base_relax.pw.parameters = orm.Dict(parameters)
-
-        running = self.submit(PwRelaxWorkChain, **inputs)
-        self.report(f'launching PwRelaxWorkChain<{running.pk}> for additional spacing: {self.ctx.current_spacing}.')
-
-        return {f"workchain_sfe": append_(running)}
-
-    def inspect_sfe(self):
-        """Inspect the SFE calculation for unstable stacking fault."""
-        workchain = self.ctx.workchain_sfe[-1]
-        self.ctx.iteration += 1
-        
-        # Use helper method for inspection
-        exit_code = self._inspect_workchain(
-            workchain,
-            'PwRelaxWorkChain',
-            'unstable faulted geometry',
-            self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
         )
-        if exit_code:
-            return exit_code
         
-        # Extract number of bands for next iteration
-        self.ctx.nbnd = workchain.outputs.output_parameters.get('number_of_bands')
-        
-        # Extract and report energy
-        total_energy_usf_geometry = self._get_workchain_energy(workchain)
-        self._report_energy(
-            total_energy_usf_geometry,
-            self.ctx.unstable_multiplier,
-            'unstable faulted geometry',
-            'unit cells'
-        )
-
-        # Calculate stacking fault energy using helper method
-        unstable_stacking_fault_energy = self._calculate_stacking_fault_energy(
-            total_energy_usf_geometry,
-            self.ctx.unstable_multiplier,
-            'unstable'
-        )
-
-        # Collect per-spacing results for the final output node
-        if not hasattr(self.ctx, 'usfe_data'):
+        # Extract results from SfeSpacingWorkChain and calculate USFE
+        if 'results' in workchain.outputs:
+            sfe_results = workchain.outputs.results.get_dict().get('sfe', [])
             self.ctx.usfe_data = []
-        
-        self.ctx.usfe_data.append({
-            'spacing': self.ctx.current_spacing,
-            'iteration': self.ctx.iteration - 1,
-            'energy_ry': float(total_energy_usf_geometry),
-            'unstable_multiplier': self.ctx.unstable_multiplier,
-            'usfe_j_m2': float(unstable_stacking_fault_energy) if unstable_stacking_fault_energy is not None else None,
-        })
+            
+            for result in sfe_results:
+                spacing = result['spacing']
+                energy_ry = result['energy_ry']
+                multiplier = result['multiplier']
+                
+                if energy_ry is None:
+                    continue
+                
+                # Calculate stacking fault energy
+                unstable_stacking_fault_energy = self._calculate_stacking_fault_energy(
+                    energy_ry,
+                    multiplier,
+                    'unstable'
+                )
+                
+                self.ctx.usfe_data.append({
+                    'spacing': spacing,
+                    'energy_ry': energy_ry,
+                    'unstable_multiplier': multiplier,
+                    'usfe_j_m2': float(unstable_stacking_fault_energy) if unstable_stacking_fault_energy is not None else None,
+                })
 
     def results(self):
         """Expose collected USFE data to the caller."""
