@@ -1,4 +1,3 @@
-from tkinter import W
 from aiida import orm
 from aiida.common import AttributeDict
 from aiida.engine import WorkChain, ToContext, if_, while_, append_
@@ -9,7 +8,6 @@ from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida_dislocation.tools import (
-    is_primitive_cell, 
     calculate_surface_area, 
     get_faulted_structure,
     get_conventional_structure,
@@ -20,7 +18,22 @@ from ase.formula import Formula
 from math import ceil
 import numpy
 
-class SFEBaseWorkChain(ProtocolMixin, WorkChain):
+from .mixins import (
+    StructureGenerationMixin,
+    EnergyCalculationMixin,
+    KpointsSetupMixin,
+    WorkflowInspectionMixin,
+)
+
+
+class SFEBaseWorkChain(
+    ProtocolMixin,
+    StructureGenerationMixin,
+    EnergyCalculationMixin,
+    KpointsSetupMixin,
+    WorkflowInspectionMixin,
+    WorkChain
+):
     """SFEBase WorkChain"""
 
     _NAMESPACE = 'sfebase'
@@ -299,7 +312,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             ),
         )
         self.ctx.total_energy_unit_cell = workchain.outputs.output_parameters.get('energy')
-        self.report(f"Totel energy of unit cell after relaxation: {self.ctx.total_energy_unit_cell / self._RY2eV} Ry")
+        self.report(f"Total energy of unit cell after relaxation: {self.ctx.total_energy_unit_cell / self._RY2eV} Ry")
 
     def _get_fault_type(self):
         """Return the fault type for this workchain. Must be implemented by subclasses."""
@@ -343,17 +356,16 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         unit_cell_formula = Formula(self.ctx.current_structure.get_ase().get_chemical_formula())
         _, unit_cell_multiplier = unit_cell_formula.reduce()
         
-        self.ctx.unit_cell_multiplier = unit_cell_multiplier
-
-        conventional_formula = Formula(conventional_structure.get_chemical_formula())
-        _, conventional_multiplier = conventional_formula.reduce()
-        
-        self.ctx.conventional_multiplier = conventional_multiplier
-
-        surface_formula = Formula(cleavaged_structure.get_chemical_formula())
-        _, surface_multiplier = surface_formula.reduce()
-        
-        self.ctx.surface_multiplier = surface_multiplier
+        # Calculate and store multipliers using helper method
+        self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(
+            self.ctx.current_structure.get_ase()
+        )
+        self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
+            conventional_structure
+        )
+        self.ctx.surface_multiplier = self._calculate_structure_multiplier(
+            cleavaged_structure
+        )
 
     def _get_kpoints_scf(self):
         """Get or create kpoints_scf. Returns kpoints_scf and its mesh."""
@@ -401,13 +413,8 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         # Get kpoints_scf
         _, kpoints_scf_mesh = self._get_kpoints_scf()
         
-        # Calculate kpoints for surface energy
-        kpoints_surface_energy = orm.KpointsData()
-        surface_energy_z_ratio = self.ctx.cleavaged_structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
-        kpoints_surface_energy.set_kpoints_mesh(
-            kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / surface_energy_z_ratio)])
-        
-        self.ctx.kpoints_surface_energy = kpoints_surface_energy
+        # Calculate kpoints for surface energy using helper method
+        self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf_mesh)
         # self.ctx.current_structure = current_structure
 
     def should_run_scf(self):
@@ -438,31 +445,45 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
     def inspect_scf(self):
         """Verify that the `PwBaseWorkChain` for the scf run successfully finished."""
         workchain = self.ctx.workchain_scf
-
-        if not workchain.is_finished_ok:
-            self.report(
-                f"scf {workchain.process_label} failed with exit status {workchain.exit_status}"
-            )
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF
-
-        self.report(f'PwBaseWorkChain<{self.ctx.workchain_scf.pk}> for conventional structure finished OK')
-        self.out_many(
-            self.exposed_outputs(
-                workchain,
-                PwBaseWorkChain,
-                namespace=self._SCF_NAMESPACE,
-            ),
+        
+        # Use helper method for inspection
+        exit_code = self._inspect_workchain(
+            workchain,
+            'PwBaseWorkChain',
+            'conventional structure',
+            self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF,
+            namespace=self._SCF_NAMESPACE,
+            workchain_class=PwBaseWorkChain
         )
+        if exit_code:
+            return exit_code
+        
+        # Extract kpoints from workchain
         self.ctx.kpoints_scf = workchain.base.links.get_outgoing(
             link_label_filter='create_kpoints_from_distance'
-            ).first().node.outputs.result
+        ).first().node.outputs.result
 
-        self.ctx.total_energy_conventional_geometry = workchain.outputs.output_parameters.get('energy')
-        self.report(f"Totel energy of conventional cell [{self.ctx.conventional_multiplier} unit cells]: {self.ctx.total_energy_conventional_geometry / self._RY2eV} Ry")
+        # Extract and report energy
+        self.ctx.total_energy_conventional_geometry = self._get_workchain_energy(workchain)
+        self._report_energy(
+            self.ctx.total_energy_conventional_geometry,
+            self.ctx.conventional_multiplier,
+            'conventional cell',
+            'unit cells'
+        )
 
+        # Report energy difference if unit cell energy available
         if 'total_energy_unit_cell' in self.ctx:
-            energy_difference = self.ctx.total_energy_conventional_geometry - self.ctx.total_energy_unit_cell / self.ctx.unit_cell_multiplier * self.ctx.conventional_multiplier
-            self.report(f'Energy difference between conventional and unit cell: {energy_difference / self._RY2eV} Ry')
+            energy_difference = (
+                self.ctx.total_energy_conventional_geometry 
+                - self.ctx.total_energy_unit_cell 
+                / self.ctx.unit_cell_multiplier 
+                * self.ctx.conventional_multiplier
+            )
+            self.report(
+                f'Energy difference between conventional and unit cell: '
+                f'{energy_difference / self._RY2eV} Ry'
+            )
 
     def run_sfe(self):
 
@@ -475,7 +496,6 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
 
         inputs.structure = self.ctx.current_structure
         inputs.base_relax.kpoints = self.ctx.kpoints_sfe
-
         settings = inputs.base_relax.pw.settings.get_dict()
         settings['USE_FRACTIONAL'] = True
 
@@ -484,7 +504,7 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
             fill_value=True,
             dtype=bool
             )
-            
+
         settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
 
         inputs.base_relax.pw.settings = orm.Dict(settings)
@@ -515,36 +535,42 @@ class SFEBaseWorkChain(ProtocolMixin, WorkChain):
         return {f"workchain_surface_energy": running}
 
     def inspect_surface_energy(self):
-
+        """Verify that the surface energy calculation successfully finished."""
         workchain = self.ctx.workchain_surface_energy
-
-        if not workchain.is_finished_ok:
-            self.report(
-                f"PwBaseWorkChain<{workchain.pk}> for surface energy calculation failed with exit status {workchain.exit_status}"
-            )
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
         
-        self.report(f'PwBaseWorkChain<{workchain.pk}> for surface energy calculation finished OK')
-
-        self.out_many(
-            self.exposed_outputs(
-                workchain,
-                PwBaseWorkChain,
-                namespace=self._SURFACE_ENERGY_NAMESPACE,
-            ),
+        # Use helper method for inspection
+        exit_code = self._inspect_workchain(
+            workchain,
+            'PwBaseWorkChain',
+            'surface energy calculation',
+            self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY,
+            namespace=self._SURFACE_ENERGY_NAMESPACE,
+            workchain_class=PwBaseWorkChain
         )
+        if exit_code:
+            return exit_code
 
-        total_energy_slab = workchain.outputs.output_parameters.get('energy')
-        self.report(f'Total energy of the cleaved geometry [{self.ctx.surface_multiplier} unit cells]: {total_energy_slab / self._RY2eV} Ry')
-        # SE = ( self.ctx.total_energy_unit_cell * self.ctx.multiplicity_cl - total_energy_slab ) * 2 / self.ctx.surface_area * self._eVA22Jm2
-        # self.report(f'Surface energy: {SE.value} J/m^2')
-        # self.ctx.SE = SE
-        # Rice_ratio = self.ctx.USF / SE
-        # self.report(f'Rice ratio: {Rice_ratio.value}')
+        # Extract and report energy
+        total_energy_slab = self._get_workchain_energy(workchain)
+        self._report_energy(
+            total_energy_slab,
+            self.ctx.surface_multiplier,
+            'cleaved geometry',
+            'unit cells'
+        )
+        
+        # Calculate surface energy
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = total_energy_slab - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.surface_multiplier
+            energy_difference = (
+                total_energy_slab 
+                - self.ctx.total_energy_conventional_geometry 
+                / self.ctx.conventional_multiplier 
+                * self.ctx.surface_multiplier
+            )
             surface_energy = energy_difference / 2 / self.ctx.surface_area * self._eVA22Jm2
-            self.report(f'Surface energy evaluated from conventional and unit cell: {surface_energy} J/m^2')
+            self.report(
+                f'Surface energy evaluated from conventional geometry: {surface_energy} J/m^2'
+            )
 
     def results(self):
         pass

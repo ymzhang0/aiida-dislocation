@@ -25,12 +25,18 @@ class TwinningWorkChain(SFEBaseWorkChain):
                 'required': False,
             }
         )
+        spec.output('results', valid_type=orm.Dict, required=False, help='Collected twinning energy and metadata.')
         
         spec.exit_code(
             404,
             "ERROR_SUB_PROCESS_FAILED_TWINNING",
             message='The `PwBaseWorkChain` for the twinning run failed.',
         )
+
+    def setup(self):
+        super().setup()
+        self.ctx.twinning_done = False
+        self.ctx.twinning_data = []
 
     def _get_fault_type(self):
         """Return the fault type for Twinning workchain.
@@ -94,7 +100,14 @@ class TwinningWorkChain(SFEBaseWorkChain):
         self.ctx.kpoints_surface_energy = kpoints_surface_energy
         self.ctx.current_structure = current_structure
         self.ctx.twinning_multiplier = twinning_multiplier
-    
+
+    def should_run_sfe(self):
+        if not self._SFE_NAMESPACE in self.inputs:
+            return False
+        if getattr(self.ctx, 'twinning_done', False):
+            return False
+        return True
+
     def run_sfe(self):
 
         inputs = AttributeDict(
@@ -133,13 +146,27 @@ class TwinningWorkChain(SFEBaseWorkChain):
             ),
         )
 
-        self.ctx.total_energy_twinning_geometry = self.ctx.total_energy_faulted_geometry = workchain.outputs.output_parameters.get('energy')
-        self.report(f'Total energy of twinning faulted geometry [{self.ctx.twinning_multiplier} unit cells]: {self.ctx.total_energy_twinning_geometry / self._RY2eV} Ry')
+        total_energy_twinning_geometry = workchain.outputs.output_parameters.get('energy')
+        self.ctx.total_energy_twinning_geometry = total_energy_twinning_geometry
+        self.ctx.total_energy_faulted_geometry = total_energy_twinning_geometry
+        self.report(f'Total energy of twinning faulted geometry [{self.ctx.twinning_multiplier} unit cells]: {total_energy_twinning_geometry / self._RY2eV} Ry')
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = self.ctx.total_energy_twinning_geometry - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.twinning_multiplier
+            energy_difference = (
+                total_energy_twinning_geometry
+                - self.ctx.total_energy_conventional_geometry / self.ctx.conventional_multiplier * self.ctx.twinning_multiplier
+            )
             twinning_stacking_fault_energy = energy_difference / self.ctx.surface_area * self._eVA22Jm2
             self.report(f'twinning stacking fault energy of evaluated from conventional geometry: {twinning_stacking_fault_energy} J/m^2')
-        # energy_difference = self.ctx.total_energy_faulted_geometry - self.ctx.total_energy_unit_cell * self.ctx.multiplicity
-        # isfe = (energy_difference / self.ctx.surface_area) * self._eVA22Jm2 / 2
-        # self.ctx.isfe = isfe
-        # self.report(f'Unstable faulted surface energy: {USF.value} J/m^2')
+        else:
+            twinning_stacking_fault_energy = None
+
+        self.ctx.twinning_data.append({
+            'energy_ry': float(total_energy_twinning_geometry),
+            'twinning_multiplier': self.ctx.twinning_multiplier,
+            'twinning_j_m2': float(twinning_stacking_fault_energy) if twinning_stacking_fault_energy is not None else None,
+        })
+        self.ctx.twinning_done = True
+
+    def results(self):
+        if getattr(self.ctx, 'twinning_data', None):
+            self.out('results', orm.Dict(dict={'twinning': self.ctx.twinning_data}))

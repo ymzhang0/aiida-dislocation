@@ -1232,17 +1232,21 @@ def _build_faulted_structure(
     ase_atoms_t,
     n_unit_cells: int,
     layers_dict: dict,
-    additional_spacing = 0.0,
+    additional_spacing: float = 0.0,
+    prefer_mode: ty.Optional[str] = 'removal',
+    vacuum_ratio: float = 0.0,
     print_info: bool = False,
 ) -> ty.Optional[FaultedStructureResult]:
-    """
-    Build a faulted structure based on the fault configuration.
+    """Build a faulted structure based on the fault configuration.
     
     Args:
         fault_config: FaultConfig object containing fault configuration
         ase_atoms_t: Transformed atoms structure
         n_unit_cells: Number of unit cells
         layers_dict: Dictionary of layers
+        additional_spacing: Additional spacing to add
+        prefer_mode: Preferred mode ('removal' or 'vacuum')
+        vacuum_ratio: Vacuum ratio when using vacuum mode
         print_info: Whether to print debug information
         
     Returns:
@@ -1251,9 +1255,15 @@ def _build_faulted_structure(
     if not fault_config.possible:
         return None
     
-    if fault_config.removal_layers is not None:
+    # Prefer removal mode if available and requested
+    if prefer_mode == 'removal' and fault_config.removal_layers is not None:
         structure = build_atoms_from_stacking_removal(
-            ase_atoms_t, n_unit_cells, fault_config.removal_layers, layers_dict, additional_spacing=(fault_config.interface, additional_spacing), print_info=print_info
+            ase_atoms_t,
+            n_unit_cells,
+            fault_config.removal_layers,
+            layers_dict,
+            additional_spacing=(fault_config.interface, additional_spacing),
+            print_info=print_info
         )
         return {
             'mode': 'removal',
@@ -1263,20 +1273,33 @@ def _build_faulted_structure(
             }],
         }
     
-    elif fault_config.burger_vectors is not None:
+    # Use burger vector (gliding/vacuum) mode if available
+    if fault_config.burger_vectors is not None:
         structures_list: list[FaultedStructureEntry] = []
         for burger_vector in fault_config.burger_vectors:
-            structure = build_atoms_from_burger_vector(
-                ase_atoms_t, n_unit_cells, burger_vector, layers_dict, print_info=print_info
-            )
-            structures_list.append(
-                {
-                    'structure': structure,
-                    'burger_vector': burger_vector,
-                }
-            )
+            if prefer_mode == 'vacuum' and vacuum_ratio > 0.0:
+                structure = build_atoms_from_burger_vector_with_vacuum(
+                    ase_atoms_t,
+                    n_unit_cells,
+                    burger_vector,
+                    layers_dict,
+                    vacuum_ratio=vacuum_ratio,
+                    print_info=print_info
+                )
+            else:
+                structure = build_atoms_from_burger_vector(
+                    ase_atoms_t,
+                    n_unit_cells,
+                    burger_vector,
+                    layers_dict,
+                    print_info=print_info
+                )
+            structures_list.append({
+                'structure': structure,
+                'burger_vector': burger_vector,
+            })
         return {
-            'mode': 'gliding',
+            'mode': 'gliding' if prefer_mode != 'vacuum' else 'vacuum',
             'structures': structures_list,
         }
     
@@ -1288,17 +1311,21 @@ def get_faulted_structure(
         additional_spacing: float,
         gliding_plane: ty.Optional[str] = None,
         n_unit_cells: int = 3,
+        fault_mode: ty.Optional[str] = None,
+        vacuum_ratio: float = 0.0,
         print_info: bool = False,
     ) -> tuple[str, ty.Optional[FaultedStructureResult]]:
-    """
-    Generate faulted structure of a specific type from conventional cell structure.
+    """Generate faulted structure of a specific type from conventional cell structure.
     
     Args:
         ase_atoms_conventional: ASE Atoms object representing the conventional cell
         fault_type: Type of fault to generate ('intrinsic', 'unstable', or 'extrinsic')
+        additional_spacing: Additional spacing to add to the structure
         gliding_plane: Gliding plane direction (e.g., '111', '011'). 
                        If None, uses the default plane from gliding system
         n_unit_cells: Number of unit cells to repeat
+        fault_mode: Preferred fault mode ('removal' or 'vacuum'). If None, uses default from config
+        vacuum_ratio: Vacuum ratio when using vacuum mode
         print_info: Whether to print debug information
         
     Returns:
@@ -1309,7 +1336,10 @@ def get_faulted_structure(
             - None if the fault type is not available
     """
     if fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
-        raise ValueError(f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', got '{fault_type}'")
+        raise ValueError(
+            f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', "
+            f"got '{fault_type}'"
+        )
 
     strukturbericht, _, plane_config, layers_dict = _prepare_structure_data(
         ase_atoms_conventional, gliding_plane, print_info
@@ -1318,961 +1348,73 @@ def get_faulted_structure(
     # Build the requested faulted structure
     fault_config = getattr(plane_config, fault_type)
     faulted_structure = _build_faulted_structure(
-        fault_config, ase_atoms_conventional, n_unit_cells, layers_dict, additional_spacing=additional_spacing, print_info=print_info
+        fault_config,
+        ase_atoms_conventional,
+        n_unit_cells,
+        layers_dict,
+        additional_spacing=additional_spacing,
+        prefer_mode=fault_mode,
+        vacuum_ratio=vacuum_ratio,
+        print_info=print_info,
     )
 
     return (strukturbericht, faulted_structure)
 
-@deprecated(reason="This function is not used in any workflow. Use get_unstable_faulted_structure instead.")
-def get_unstable_faulted_structure_and_kpoints_old(
-        structure_uc: orm.StructureData,
-        kpoints_uc: orm.KpointsData,
-        n_layers: int,
-        slipping_system: orm.List,
-    ) -> tuple[orm.StructureData, orm.KpointsData, int]:
 
+def get_unstable_faulted_structure_and_kpoints(
+    structure_uc: orm.StructureData,
+    kpoints_uc: orm.KpointsData,
+    n_layers: int,
+    slipping_system: orm.List,
+) -> tuple[orm.StructureData, orm.KpointsData]:
+    """Get unstable faulted structure and corresponding kpoints for GSFE workflow.
+    
+    This is a convenience wrapper that extracts structure and calculates kpoints
+    from get_unstable_faulted_structure.
+    
+    :param structure_uc: Unit cell structure
+    :param kpoints_uc: Unit cell kpoints
+    :param n_layers: Number of layers
+    :param slipping_system: List containing [structure_type, gliding_plane, slipping_direction]
+    :return: Tuple of (faulted_structure, kpoints)
     """
-    Get a supercell of the structure
-    """
-
-    structure_type, gliding_plane, slipping_direction = slipping_system
-
-    structure_sc = orm.StructureData()
+    structure_type, gliding_plane, _ = slipping_system.get_list()
+    
+    # Get unstable faulted structure
+    _, structures_dict = get_unstable_faulted_structure(
+        structure_uc.get_ase(),
+        gliding_plane=gliding_plane if gliding_plane else None,
+        n_unit_cells=n_layers,
+    )
+    
+    # Extract unstable structure
+    if 'unstable' not in structures_dict or structures_dict['unstable'] is None:
+        raise ValueError('Unstable fault structure is not available for this gliding system.')
+    
+    unstable_data = structures_dict['unstable']
+    if not unstable_data.get('structures'):
+        raise ValueError('Unstable fault structure list is empty.')
+    
+    unstable_structure_ase = unstable_data['structures'][0].get('structure')
+    if unstable_structure_ase is None:
+        raise ValueError('Unstable fault structure is missing structure data.')
+    
+    # Convert to StructureData
+    structure_sc = orm.StructureData(ase=unstable_structure_ase)
+    
+    # Calculate kpoints for supercell
+    # Get z-ratio between supercell and unit cell
+    z_ratio = unstable_structure_ase.cell.cellpar()[2] / structure_uc.cell.cellpar()[2]
+    kpoints_mesh_uc = kpoints_uc.get_kpoints_mesh()[0]
+    
+    # Adjust kpoints mesh for supercell
+    kpoints_mesh_sc = list(kpoints_mesh_uc)
+    kpoints_mesh_sc[2] = ceil(kpoints_mesh_sc[2] / z_ratio)
+    
     kpoints_sc = orm.KpointsData()
-
-    structure_cl = orm.StructureData()
-    kpoints_cl = orm.KpointsData()
-
-    multiplicity = 1
-    multiplicity_cl = 1
-    surface_area = None
-
-    if structure_type == 'A1':
-
-        # A, B, C are the length from [0 0 0] to [1/2, 1/2, 0]
-        # The lattice constant for conventional cell is A * sqrt(2)
-
-        A, B, C = structure_uc.cell_lengths
-        alpha, beta, gamma = structure_uc.cell_angles
-
-        if (
-            (max(A, B, C) - min(A, B, C)) > 1e-5
-            or
-            any(abs(angle - 60.0) > 1e-5 for angle in (alpha, beta, gamma))
-            ):
-            logger.info('Cell length or angles differ more than 1e-5.')
-
-        ATOM = structure_uc.get_kind_names()[0]
-
-        if gliding_plane == '100':
-
-            # A / sqrt(2) is half of the lattice constant for conventional cell
-
-            A = A
-            C = C * sqrt(2) * n_layers / 2
-
-            supercell = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 0.5, 0.5],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM, 0.0, 0.5],]
-                planer_config['D'] = [[ATOM, 0.5, 0.0],]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-
-            cleavaged_stacking = 'AB' * int(n_layers/2)
-
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-
-            multiplicity = n_layers
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-        elif gliding_plane == '110':
-            A = A
-            C = C * n_layers / 2
-
-            supercell = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A*sqrt(2),   0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A*sqrt(2),   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 0.5, 0.5],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM, 0.0, 0.5],]
-                planer_config['D'] = [[ATOM, 0.5, 0.0],]
-
-            faulted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-            cleavaged_stacking = 'AB' * int(n_layers/2)
-            for idx, st in enumerate(faulted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-
-            multiplicity = n_layers
-            multiplicity_cl = n_layers
-            surface_area = numpy.linalg.norm(numpy.cross(supercell[0], supercell[1]))
-
-        elif gliding_plane == '111':
-
-            if n_layers % 3 != 0:
-                raise ValueError('n_layers must be a multiple of 3 for 111 gliding plane')
-
-            C = C * sqrt(2) * sqrt(3) * (n_layers - 1) / 3
-            supercell = numpy.array([
-                [A,   0.0,           0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0,           C],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A,   0.0, 0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 1/3, 1/3],],
-                'C': [[ATOM, 2/3, 2/3],],
-            }
-
-            faulted_stacking = 'ABC'  + 'DEF' * int(n_layers/3-1)
-
-            faulted_stacking = faulted_stacking[:-1]
-
-            if slipping_direction:
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['E'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-                planer_config['F'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['C']
-                ]
-            else:
-                planer_config['D'] = [[ATOM, 1/3, 1/3],]
-                planer_config['E'] = [[ATOM, 2/3, 2/3],]
-                planer_config['F'] = [[ATOM, 0.0, 0.0],]
-
-            for idx, st in enumerate(faulted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/(n_layers - 1)])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers - 1,
-                3
-            )
-
-            multiplicity = n_layers - 1
-
-            cleavaged_stacking = 'ABC' * int(n_layers/3)
-
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                3
-            )
-
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-    elif structure_type == 'A2':
-
-        ## A is the length from [0 0 0] to [1/2, 1/2, 1/2]
-        ## Lattice constant for conventional cell is A * 2 / sqrt(3)
-        A, B, C = structure_uc.cell_lengths
-        alpha, beta, gamma = structure_uc.cell_angles
-
-        if (
-            (max(A, B, C) - min(A, B, C)) > 1e-5
-            or
-            any(abs(angle - acos(-1/3) * 180/pi) > 1e-5 for angle in (alpha, beta, gamma))
-            ):
-            logger.info('Cell length or angles differ more than 1e-5.')
-
-        ATOM = structure_uc.get_kind_names()[0]
-
-
-        if gliding_plane == '100':
-            if n_layers % 2 != 0:
-                raise ValueError('n_layers must be a multiple of 2 for 100 gliding plane')
-            A = A * 2 / sqrt(3)
-            C = A * n_layers / 2
-
-            supercell = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A,   0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 1/2, 1/2],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM, 0.0, 1/2],]
-                planer_config['D'] = [[ATOM, 1/2, 0],]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-                )
-
-            cleavaged_stacking = 'AB' * int(n_layers/2)
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-
-            multiplicity = n_layers
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-        if gliding_plane == '110':
-            if n_layers % 2 != 0:
-                raise ValueError('n_layers must be a multiple of 2 for 110 gliding plane')
-            A = A * 2 / sqrt(3)
-            C = A * sqrt(2) * n_layers / 2
-
-            supercell = numpy.array([
-                [ A / 2, A / sqrt(2), 0.0],
-                [-A / 2, A / sqrt(2), 0.0],
-                [0.0,    0.0,         C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A / 2, A / sqrt(2), 0.0],
-                [-A / 2, A / sqrt(2),   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 1/2, 1/2],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM, 0.0, 1/2],]
-                planer_config['D'] = [[ATOM, 1/2, 0.0],]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            cleavaged_stacking = 'AB' * int(n_layers/2)
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-
-            multiplicity = n_layers
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-        elif gliding_plane == '111':
-            if n_layers % 3 != 0:
-                raise ValueError('n_layers must be a multiple of 3 for 111 gliding plane')
-
-            A = A * 2 * sqrt(2) / sqrt(3)
-            C = C * 2 * (n_layers - 1) / 4
-
-            supercell = numpy.array([
-                [A,   0.0, 0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A,   0.0, 0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM, 0.0, 0.0],],
-                'B': [[ATOM, 2/3, 2/3],],
-                'C': [[ATOM, 1/3, 1/3],],
-            }
-
-            if slipping_direction:
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['E'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-                planer_config['F'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['C']
-                ]
-            else:
-                planer_config['D'] = [[ATOM, 1/3, 1/3],]
-                planer_config['E'] = [[ATOM, 0.0, 0.0],]
-                planer_config['F'] = [[ATOM, 2/3, 2/3],]
-
-            falted_stacking = 'ABC'  + 'DEF' * int(n_layers/3-1)
-
-            falted_stacking = falted_stacking[:-1]
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/(n_layers - 1)])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                3
-            )
-
-            cleavaged_stacking = 'ABC' * int(n_layers/3)
-            for idx, st in enumerate(cleavaged_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])  #
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                3
-            )
-
-            multiplicity = n_layers - 1
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-    elif structure_type == 'A15':
-        pass
-    elif structure_type == 'B1':
-
-        ## A is the length from [0 0 0] to [1/2, 1/2, 0]
-        ## Lattice constant for conventional cell is A * sqrt(2)
-
-        A, B, C = structure_uc.cell_lengths
-        alpha, beta, gamma = structure_uc.cell_angles
-
-        if (
-            (max(A, B, C) - min(A, B, C)) > 1e-5
-            or
-            any(abs(angle - 60.0) > 1e-5 for angle in (alpha, beta, gamma))
-            ):
-            logger.info('Cell length or angles differ more than 1e-5.')
-
-        elements_wyckoff_symbols = get_elements_for_wyckoff_symbols(structure_uc)
-
-        ATOM_1, ATOM_2 = (elements_wyckoff_symbols[k] for k in ['a', 'b'])
-
-        if gliding_plane == '100':
-
-            A = A
-            C = A * sqrt(2) * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.5, 0.5]],
-                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.0, 0.0]],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.0, 0.5]]
-                planer_config['D'] = [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.5, 0.0]]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            falted_stacking_cl = 'AB' * int(n_layers/2)
-
-            for idx, st in enumerate(falted_stacking_cl):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])
-                    #
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            multiplicity = n_layers
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-            multiplicity_cl = n_layers
-
-            surface_area = numpy.abs(numpy.linalg.norm(numpy.cross(supercell[0], supercell[1])))
-
-        elif gliding_plane == '110':
-
-            A = A
-            C = A * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0      , 0.0],
-                [0.0, sqrt(2)*A, 0.0],
-                [0.0, 0.0      , C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A * sqrt(2),   0.0],
-                [0.0, 0.0, C*2 ],
-            ])
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 0.5],],
-                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.5, 0.0],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.5, 0.5]]
-                planer_config['D'] = [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.0, 0.0]]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            falted_stacking_cl = 'AB' * int(n_layers/2)
-
-            for idx, st in enumerate(falted_stacking_cl):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            multiplicity = n_layers
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-            multiplicity_cl = n_layers
-
-            surface_area = A * A * sqrt(2)
-
-
-        elif gliding_plane == '111':
-
-            if n_layers % 12 != 0:
-                raise ValueError('n_layers must be a multiple of 12 for 111 gliding plane')
-
-            A = A
-            C = A * n_layers / sqrt(6)
-
-            supercell = numpy.array([
-                [A  , 0.0, 0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-
-            planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0]],
-                'c': [[ATOM_2, 2/3, 2/3]],
-                'B': [[ATOM_1, 1/3, 1/3]],
-                'a': [[ATOM_1, 0.0, 0.0]],
-                'C': [[ATOM_1, 2/3, 2/3]],
-                'b': [[ATOM_1, 1/3, 1/3]],
-            }
-
-            falted_stacking = 'AcBaCb' * int(n_layers/6)
-            falted_stacking = falted_stacking[:6] + falted_stacking[7:]
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                6
-            )
-
-            multiplicity = n_layers
-
-            surface_area = A * A * sqrt(3) / 2
-
-    elif structure_type == 'C1b':
-        A, B, C = structure_uc.cell_lengths
-        alpha, beta, gamma = structure_uc.cell_angles
-
-        if (
-            (max(A, B, C) - min(A, B, C)) > 1e-5
-            or
-            any(abs(angle - 60.0) > 1e-5 for angle in (alpha, beta, gamma))
-            ):
-            logger.info('Cell length or angles differ more than 1e-5.')
-
-
-        ## TODO: Check the order of the atoms
-
-        ## ATOM_1 is the atom at [0, 0, 0]
-        ## ATOM_2 is the atom at [0.5, 0.5, 0.5]
-        ## ATOM_3 is the atom at [0.25, 0.25, 0.25]
-
-        elements_wyckoff_symbols = get_elements_for_wyckoff_symbols(structure_uc)
-
-        ATOM_1, ATOM_2, ATOM_3 = (elements_wyckoff_symbols[k] for k in ['a', 'b', 'c'])
-
-
-        if gliding_plane == '100':
-
-            ## The length of the conventional cell is A * sqrt(2)
-            if n_layers % 8 != 0:
-                raise ValueError('n_layers must be a multiple of 8 for 100 gliding plane')
-
-            A = A
-            C = A * sqrt(2) * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C  ],
-            ], dtype=numpy.float64)
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A,   0.0],
-                [0.0, 0.0, C*2 ],
-            ], dtype=numpy.float64)
-
-            structure_cl.set_cell(supercell_cl)
-
-
-            planer_config = {
-                'A':    [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.5, 0.5],],
-                'B':    [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.0, 0.0] ],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.0, 0.5]]
-                planer_config['D'] = [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.5, 0.0]]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            falted_stacking_cl = 'AB' * int(n_layers/2)
-
-            for idx, st in enumerate(falted_stacking_cl):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            multiplicity = n_layers
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-            multiplicity_cl = n_layers
-
-            surface_area = A * A
-
-        elif gliding_plane == '110':
-
-            A = A
-            C = C * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A * sqrt(2),   0.0],
-                [0.0, 0.0, C  ],
-            ])
-
-            structure_sc.set_cell(supercell)
-
-            supercell_cl = numpy.array([
-                [A  , 0.0, 0.0],
-                [0.0, A * sqrt(2),   0.0],
-                [0.0, 0.0, C*2 ],
-            ])
-
-            structure_cl.set_cell(supercell_cl)
-
-            planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 0.5],],
-                'B': [[ATOM_1, 0.5, 0.5], [ATOM_2, 0.5, 0.0],],
-            }
-
-            if slipping_direction:
-                planer_config['C'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['A']
-                ]
-                planer_config['D'] = [
-                    [ATOM, x + slipping_direction[0], y + slipping_direction[1]]
-                    for ATOM, x, y in planer_config['B']
-                ]
-            else:
-                planer_config['C'] = [[ATOM_1, 0.5, 0.0], [ATOM_2, 0.5, 0.5]]
-                planer_config['D'] = [[ATOM_1, 0.0, 0.5], [ATOM_2, 0.05, 0.0]]
-
-            falted_stacking = 'AB' * int(n_layers/4) + 'CD' * int(n_layers/4)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-
-            falted_stacking_cl = 'AB' * int(n_layers/2)
-
-            for idx, st in enumerate(falted_stacking_cl):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers/2])
-                    position_cart = position_frac @ supercell_cl
-                    structure_cl.append_atom(position=position_cart, symbols=value[0])
-
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                2
-            )
-
-            multiplicity = n_layers
-
-            kpoints_cl = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers*2,
-                2
-            )
-            multiplicity_cl = n_layers
-
-            surface_area = A * A * sqrt(2)
-
-        elif gliding_plane == '111':
-
-            A = A
-            C = C * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0, 0.0],
-                [A * 1/2, A * sqrt(3)/2, 0.0],
-                [0.0, 0.0, C  ],
-            ])
-
-            structure_sc.set_cell(supercell)
-
-    elif structure_type == 'E21':
-        A, B, C = structure_uc.cell_lengths
-        alpha, beta, gamma = structure_uc.cell_angles
-
-        if (
-            (max(A, B, C) - min(A, B, C)) > 1e-5
-            or
-            any(abs(angle - 60.0) > 1e-5 for angle in (alpha, beta, gamma))
-            ):
-            logger.info('Cell length or angles differ more than 1e-5.')
-
-        ATOM_1, ATOM_2, ATOM_3 = structure_uc.get_kind_names()
-
-
-        if gliding_plane == '110':
-
-            C = A * n_layers / 2
-
-            supercell = numpy.array([
-                [A  , 0.0      , 0.0],
-                [0.0, sqrt(2)*A, 0.0],
-                [0.0, 0.0      , C  ],
-            ])
-
-            structure_sc.set_cell(supercell)
-
-            ## TODO: Check the order of the atoms
-            elements_wyckoff_symbols = elements_wyckoff_symbols(structure_uc)
-            ATOM_1, ATOM_2, ATOM_3 = structure_uc.get_kind_names()
-
-            planer_config = {
-                'A': [[ATOM_1, 0.0, 0.0], [ATOM_2, 0.0, 1/2], [ATOM_3, 1/2, 1/2]],
-                'B': [[ATOM_2, 1/4, 0.0], [ATOM_2, 3/4, 0.0]],
-                'C': [[ATOM_2, 0.5, 0.5], [ATOM_3, 0.0, 1/2], [ATOM_1, 1/2, 0.0]],
-                }
-
-            falted_stacking = 'ABCB' * int(n_layers/8) + 'CBAB' * int(n_layers/8)
-
-            for idx, st in enumerate(falted_stacking):
-                for value in planer_config[st]:
-                    position_frac = numpy.array([*value[1:], idx/n_layers])
-                    position_cart = position_frac @ supercell
-                    structure_sc.append_atom(position=position_cart, symbols=value[0])  #
-            kpoints_sc = get_kpoints_mesh_for_supercell(
-                kpoints_uc,
-                n_layers,
-                4
-            )
-
-
-    return (structure_sc, kpoints_sc, multiplicity, surface_area, structure_cl, kpoints_cl, multiplicity_cl)
+    kpoints_sc.set_kpoints_mesh(kpoints_mesh_sc)
+    
+    return (structure_sc, kpoints_sc)
 
 def is_primitive_cell(structure: orm.StructureData) -> bool:
     """

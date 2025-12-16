@@ -1,4 +1,3 @@
-from tkinter import W
 from aiida import orm
 from aiida.common import AttributeDict
 from aiida.engine import WorkChain, ToContext, if_, while_, append_
@@ -13,7 +12,7 @@ from aiida_quantumespresso.calculations.pw import PwCalculation
 
 import logging
 
-from ..tools import get_unstable_faulted_structure
+from ..tools import get_unstable_faulted_structure_and_kpoints
 
 
 class GSFEWorkChain(ProtocolMixin, WorkChain):
@@ -26,39 +25,22 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
     _SURFACE_ENERGY_NAMESPACE = "surface_energy"
     _CURVE_NAMESPACE = "curve"
 
-    # Strukturtyp, gliding plane, slipping direction
 
-    _IMPLEMENTED_SLIPPING_SYSTEMS = (
-        ('A1', '100', None),
-        ('B1', '100', None),
-        ('B1', '110', None),
-        ('B1', '111', None),
-        ('C2', '100', None),
-        ('A15', '100', None),
-        ('A15', '110', None),
-        ('C1b', '100', None),
-        ('E21', '100', None),
-        ('E21', '110', None),
-    )
 
     @classmethod
     def define(cls, spec):
         super().define(spec)
 
-        spec.input('n_layers', valid_type=orm.Int, required=True, default=lambda: orm.Int(4),
-                   help='The number of layers in the supercell')
-        spec.input('nsteps', valid_type=orm.Int, required=False, default=lambda: orm.Int(10),
-                   help='The number of stacking faults ')
-        spec.input('slipping_system', valid_type=orm.List, required=True,
-                   help="""
-                   Currently only supported:
-                   A1, 100, 100
-                   B1, 100, 100
-                   B1, 110, 110
-                   """)
 
+        spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
+                help='The number of layers in the supercell')
+        spec.input('gliding_plane', valid_type=orm.Str, required=False, default=lambda: orm.Str(),
+                help='The normal vector for the supercell. Note that please always put the z axis at the last.')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
-        spec.input('kpoints', valid_type=orm.KpointsData, required=True,)
+        spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
+                help='The distance between kpoints for the kpoints generation')
+        spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
+                    help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
 
         spec.expose_inputs(
             PwBaseWorkChain,
@@ -93,13 +75,12 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            if_(cls.should_run_usf)(
-                cls.run_usf,
-                cls.inspect_usf,
-            ),
-            if_(cls.should_run_curve)(
-                cls.run_curve,
-                cls.inspect_curve,
+            while_(cls.should_run_curve)(
+                while_(cls.should_run_sfe)(
+                    cls.setup_supercell_kpoints,
+                    cls.run_sfe,
+                    cls.inspect_sfe,
+                ),
             ),
             if_(cls.should_run_surface_energy)(
                 cls.run_surface_energy,

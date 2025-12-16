@@ -1,12 +1,14 @@
 default_inputs:
   clean_workdir: True
   kpoints_distance: 0.3
+  fault_method: removal
+  vacuum_ratio: 1.0
   additional_spacings: 
-    - -0.004
-    - -0.002
     - 0.000
     - 0.002
     - 0.004
+    - 0.006
+    - 0.008
   relax:
     base_relax:
       pw:

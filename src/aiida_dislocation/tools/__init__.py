@@ -1,21 +1,12 @@
 from .structure import (
     _GLIDING_SYSTEMS,
-    read_structure_from_file,
-    check_bravais_lattice,
     group_by_layers,
     get_strukturbericht,
-    build_atoms_from_stacking_removal,
-    build_atoms_from_stacking_mirror,
-    build_atoms_from_burger_vector,
-    build_atoms_from_burger_vector_with_vacuum,
     get_unstable_faulted_structure,
+    get_unstable_faulted_structure_and_kpoints,
     get_faulted_structure,
     get_conventional_structure,
     get_cleavaged_structure,
-    build_atoms_surface,
-    is_primitive_cell,
-    get_elements_for_wyckoff_symbols,
-    get_kpoints_mesh_for_supercell,
     calculate_surface_area,
 )
 
@@ -33,24 +24,17 @@ from .cut import (
 )
 
 __all__ = (
+    # Core structure functions
     '_GLIDING_SYSTEMS',
-    'read_structure_from_file',
     'group_by_layers',
-    'check_bravais_lattice',
+    'get_strukturbericht',
     'get_unstable_faulted_structure',
+    'get_unstable_faulted_structure_and_kpoints',
     'get_faulted_structure',
     'get_conventional_structure',
     'get_cleavaged_structure',
-    'get_strukturbericht',
-    'check_bravais_lattice',
-    'build_atoms_from_stacking_removal',
-    'build_atoms_from_stacking_mirror',
-    'build_atoms_from_burger_vector',
-    'build_atoms_from_burger_vector_with_vacuum',
-    'build_atoms_surface',
-    'is_primitive_cell',
-    'get_elements_for_wyckoff_symbols',
-    'get_kpoints_mesh_for_supercell',
+    'calculate_surface_area',
+    # Visualization functions (for notebooks/plotting)
     'list_to_tex',
     'draw_sphere',
     'draw_edge_arrows',
@@ -61,5 +45,4 @@ __all__ = (
     'plot_layer',
     'plot_layers',
     'plot_all_layers_element_colored',
-    'calculate_surface_area',
 )

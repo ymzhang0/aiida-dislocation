@@ -1,4 +1,3 @@
-from tkinter import W
 from aiida import orm
 from aiida.common import AttributeDict
 from aiida.engine import WorkChain, while_, append_
@@ -8,7 +7,8 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain, PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida_dislocation.tools import (
-    get_faulted_structures,
+    get_faulted_structure,
+    get_conventional_structure,
 )
 
 class RelaxSpacingWorkChain(ProtocolMixin, WorkChain):
@@ -111,15 +111,36 @@ class RelaxSpacingWorkChain(ProtocolMixin, WorkChain):
     def setup(self):
         self.ctx.current_structure = self.inputs.structure
         self.ctx.iteration = 1
-        self.ctx.structures = get_faulted_structures(
-            self.inputs.structure, 'removal', 1, 1, self.inputs.additional_spacings)
+        
+        # Generate structures for each additional spacing
+        # First get conventional structure
+        gliding_plane = self.inputs.gliding_plane.value if hasattr(self.inputs, 'gliding_plane') and self.inputs.gliding_plane.value else None
+        _, conventional_structure = get_conventional_structure(
+            self.inputs.structure.get_ase(),
+            gliding_plane=gliding_plane,
+        )
+        
+        # Generate faulted structures for each spacing
+        additional_spacings = self.inputs.additional_spacings.get_list() if hasattr(self.inputs.additional_spacings, 'get_list') else []
+        self.ctx.structures = []
+        
+        for spacing in additional_spacings:
+            _, faulted_structure_data = get_faulted_structure(
+                conventional_structure,
+                fault_type='unstable',  # Using unstable as default
+                additional_spacing=spacing,
+                gliding_plane=gliding_plane,
+                n_unit_cells=1,  # Using 1 as default
+                fault_mode='removal',
+            )
+            
+            if faulted_structure_data and faulted_structure_data.get('structures'):
+                structure_entry = faulted_structure_data['structures'][0]
+                if structure_entry.get('structure'):
+                    self.ctx.structures.append(orm.StructureData(ase=structure_entry['structure']))
 
     def should_run_relax(self):
-        
-        if self.ctx.structures == []:
-            return False
-        
-        return True
+        return bool(self.ctx.structures)
     
     def run_relax(self):
 
@@ -139,7 +160,7 @@ class RelaxSpacingWorkChain(ProtocolMixin, WorkChain):
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.ctx.current_structure.get_formula()} faulted unit cell geometry.')
 
-        return {f"workchain_relax_{self.ctx.iteration}": append_(running)}
+        return {"workchain_relax": append_(running)}
 
     def inspect_relax(self):
         workchain = self.ctx.workchain_relax[-1]
