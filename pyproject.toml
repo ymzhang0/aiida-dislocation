@@ -26,6 +26,7 @@ dependencies = [
     'aiida-quantumespresso>=4.11',
     'aiida-pseudo~=1.1',
     'click~=8.0',
+    'deprecated>=1.2.0',
     'importlib_resources',
     'jsonschema',
     'numpy',

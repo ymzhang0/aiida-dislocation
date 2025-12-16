@@ -1,4 +1,3 @@
-from os import uname
 from aiida import orm
 from math import sqrt, acos, pi, ceil
 import numpy
