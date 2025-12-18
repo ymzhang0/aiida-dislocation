@@ -6,14 +6,6 @@ from aiida.orm import Dict, StructureData, List, Str, Float, Int, Bool
 from plumpy import ProcessState
 from ase.build import bulk
 
-# Try to load AiiDA profile if available
-try:
-    from aiida import load_profile
-    load_profile()
-except Exception:
-    # If profile loading fails, tests that require it will be skipped
-    pass
-
 
 @pytest.fixture
 def generate_structure():
