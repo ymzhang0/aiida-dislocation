@@ -7,11 +7,6 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 
-from aiida.engine import CalcJob, BaseRestartWorkChain, ExitCode, process_handler, while_, if_
-from aiida_quantumespresso.calculations.pw import PwCalculation
-
-import logging
-
 from ..tools import get_unstable_faulted_structure_and_kpoints
 
 
@@ -20,10 +15,11 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
 
     _NAMESPACE = 'gsfe'
 
-    _SCF_NAMESPACE = "scf"
-    _USF_NAMESPACE = "usf"
-    _SURFACE_ENERGY_NAMESPACE = "surface_energy"
-    _CURVE_NAMESPACE = "curve"
+    _PW_RELAX_NAMESPACE = "relax"
+    _PW_SCF_NAMESPACE = "scf"
+    _PW_USF_NAMESPACE = "usf"
+    _PW_SURFACE_ENERGY_NAMESPACE = "surface_energy"
+    _PW_CURVE_NAMESPACE = "curve"
 
 
 
@@ -41,29 +37,66 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
                 help='The distance between kpoints for the kpoints generation')
         spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
                     help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
+        spec.input('n_layers', valid_type=orm.Int, required=False,
+                    help='Number of layers for GSFE calculation.')
+        spec.input('slipping_system', valid_type=orm.List, required=False,
+                    help='Slipping system for GSFE calculation.')
+        spec.input('only_USF', valid_type=orm.Bool, required=False, default=lambda: orm.Bool(False),
+                    help='If True, only calculate USF.')
+
+        spec.expose_inputs(
+            PwRelaxWorkChain,
+            namespace=cls._PW_RELAX_NAMESPACE,
+            exclude=('structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the `PwRelaxWorkChain`.'
+            }
+        )
 
         spec.expose_inputs(
             PwBaseWorkChain,
             namespace=cls._PW_SCF_NAMESPACE,
-            exclude=('structure', 'kpoints')
+            exclude=('pw.structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the `PwBaseWorkChain` for SCF calculation.'
+            }
         )
         spec.expose_inputs(
             PwBaseWorkChain,
             namespace=cls._PW_USF_NAMESPACE,
-            exclude=('structure', 'kpoints')
-            )
+            exclude=('pw.structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the `PwBaseWorkChain` for USF calculation.'
+            }
+        )
 
         spec.expose_inputs(
             PwBaseWorkChain,
             namespace=cls._PW_SURFACE_ENERGY_NAMESPACE,
-            exclude=('structure', 'kpoints')
-            )
+            exclude=('pw.structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the `PwBaseWorkChain` for surface energy calculation.'
+            }
+        )
 
         spec.expose_inputs(
             PwBaseWorkChain,
             namespace=cls._PW_CURVE_NAMESPACE,
-            exclude=('structure', 'kpoints')
-            )
+            exclude=('pw.structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the `PwBaseWorkChain` for curve calculation.'
+            }
+        )
 
         spec.outline(
             cls.setup,
@@ -87,6 +120,13 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
                 cls.inspect_surface_energy,
             ),
             cls.results,
+        )
+        spec.expose_outputs(
+            PwRelaxWorkChain,
+            namespace=cls._PW_RELAX_NAMESPACE,
+            namespace_options={
+                'required': False,
+            }
         )
         spec.expose_outputs(
             PwBaseWorkChain,
@@ -175,7 +215,8 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
         for namespace, workchain_type in [
             (cls._PW_RELAX_NAMESPACE, PwRelaxWorkChain),
             (cls._PW_SCF_NAMESPACE, PwBaseWorkChain),
-            (cls._PW_SFE_NAMESPACE, PwBaseWorkChain),
+            (cls._PW_USF_NAMESPACE, PwBaseWorkChain),
+            (cls._PW_CURVE_NAMESPACE, PwBaseWorkChain),
             (cls._PW_SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             sub_builder = workchain_type.get_builder_from_protocol(
@@ -191,9 +232,11 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
 
             builder[namespace]._data = sub_builder._data
 
-        builder[cls._PW_RELAX_NAMESPACE].pop('base_final_scf', None)
-        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints', None)
-        builder[cls._PW_RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
+        if cls._PW_RELAX_NAMESPACE in builder:
+            builder[cls._PW_RELAX_NAMESPACE].pop('base_final_scf', None)
+            if 'base_relax' in builder[cls._PW_RELAX_NAMESPACE]:
+                builder[cls._PW_RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
+                builder[cls._PW_RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
@@ -202,25 +245,28 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
         return builder
     def setup(self):
         self.ctx.current_structure = self.inputs.structure
-        self.ctx.kpoints = self.inputs.kpoints
         self.ctx.sf_count = 0
         self.ctx.sf_energy = []
         self.ctx.sf_stress = []
         self.ctx.sf_strain = []
-        self.ctx.sf_displacement = []
         self.ctx.sf_displacement = []
 
     def should_run_relax(self):
         return self._PW_RELAX_NAMESPACE in self.inputs
 
     def run_relax(self):
-        inputs = AttributeDict(self.exposed_inputs(PwRelaxWorkChain, namespace='pw'))
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwRelaxWorkChain,
+                namespace=self._PW_RELAX_NAMESPACE
+            )
+        )
         inputs.metadata.call_link_label = f'relax_uc'
         inputs.structure = self.inputs.structure
-        inputs.kpoints = self.inputs.kpoints
+        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for unitcell {self.inputs.structure.get_formula()}')
-        self.to_context(workchain_relax_uc = running)
+        return ToContext(workchain_relax_uc=running)
 
     def inspect_relax(self):
         workchain = self.ctx.workchain_relax_uc
@@ -230,7 +276,16 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
 
         self.report(f'Relax calculation<{self.ctx.workchain_relax_uc.pk}> finished')
 
-        self.ctx.current_structure = workchain.outputs.structure
+        self.ctx.current_structure = workchain.outputs.output_structure
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwRelaxWorkChain,
+                namespace=self._PW_RELAX_NAMESPACE
+            )
+        )
 
     def should_run_scf(self):
         return self._PW_SCF_NAMESPACE in self.inputs
@@ -245,13 +300,13 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
 
         inputs.metadata.call_link_label = self._PW_SCF_NAMESPACE
 
-        inputs.structure = self.ctx.current_structure
-        inputs.kpoints = self.ctx.kpoints
+        inputs.pw.structure = self.ctx.current_structure
+        inputs.kpoints_distance = self.inputs.kpoints_distance
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for unitcell {self.inputs.structure.get_formula()}')
 
-        self.to_context(workchain_scf_uc = running)
+        return ToContext(workchain_scf_uc=running)
 
     def inspect_scf(self):
         workchain = self.ctx.workchain_scf_uc
@@ -260,32 +315,64 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SCF
 
         self.report(f'SCF calculation<{self.ctx.workchain_scf_uc.pk}> finished')
+        
+        # Extract kpoints from workchain
+        if 'create_kpoints_from_distance' in [link.label for link in workchain.base.links.get_outgoing()]:
+            self.ctx.kpoints = workchain.base.links.get_outgoing(
+                link_label_filter='create_kpoints_from_distance'
+            ).first().node.outputs.result
+        else:
+            # Fallback: create kpoints from distance
+            from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
+            kpoints_inputs = {
+                'structure': orm.StructureData(ase=self.ctx.current_structure.get_ase()),
+                'distance': self.inputs.kpoints_distance,
+                'metadata': {'call_link_label': 'create_kpoints_from_distance'}
+            }
+            self.ctx.kpoints = create_kpoints_from_distance(**kpoints_inputs)
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwBaseWorkChain,
+                namespace=self._PW_SCF_NAMESPACE
+            )
+        )
 
     def should_run_usf(self):
-
-        return self.inputs.only_USF
+        if not hasattr(self.inputs, 'only_USF') or not self.inputs.only_USF.value:
+            return False
+        return self._PW_USF_NAMESPACE in self.inputs
 
     def run_usf(self):
-
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
                 namespace=self._PW_USF_NAMESPACE
-                )
             )
+        )
         inputs.metadata.call_link_label = self._PW_USF_NAMESPACE
+        
         structure_uc = self.ctx.current_structure
         kpoints_uc = self.ctx.kpoints
+        
+        n_layers = self.inputs.n_layers.value if hasattr(self.inputs, 'n_layers') and self.inputs.n_layers else None
+        slipping_system = self.inputs.slipping_system.get_list() if hasattr(self.inputs, 'slipping_system') and self.inputs.slipping_system else None
+        
+        if n_layers is None or slipping_system is None:
+            raise ValueError('n_layers and slipping_system are required for USF calculation.')
+        
         structure_sc, kpoints_sc = get_unstable_faulted_structure_and_kpoints(
-            structure_uc, kpoints_uc, self.inputs.n_layers, self.inputs.slipping_system
-            )
-        inputs.structure = structure_sc
+            structure_uc, kpoints_uc, n_layers, slipping_system
+        )
+        inputs.pw.structure = structure_sc
         inputs.kpoints = kpoints_sc
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for faulted supercell.')
 
-        self.to_context(workchain_scf_faulted_supercell = running)
+        return ToContext(workchain_scf_faulted_supercell=running)
 
     def inspect_usf(self):
         workchain = self.ctx.workchain_scf_faulted_supercell
@@ -294,20 +381,41 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
 
         self.report(f'USF calculation<{self.ctx.workchain_scf_faulted_supercell.pk}> finished')
-        self.ctx.current_structure = workchain.outputs.structure
-        self.ctx.kpoints = workchain.outputs.kpoints
+        self.ctx.current_structure = workchain.outputs.output_structure
+        
+        # Extract kpoints if available
+        if 'kpoints' in workchain.outputs:
+            self.ctx.kpoints = workchain.outputs.kpoints
+        elif 'create_kpoints_from_distance' in [link.label for link in workchain.base.links.get_outgoing()]:
+            self.ctx.kpoints = workchain.base.links.get_outgoing(
+                link_label_filter='create_kpoints_from_distance'
+            ).first().node.outputs.result
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwBaseWorkChain,
+                namespace=self._PW_USF_NAMESPACE
+            )
+        )
 
     def should_run_curve(self):
         return self._PW_CURVE_NAMESPACE in self.inputs
 
     def run_curve(self):
-        inputs = AttributeDict(self.exposed_inputs(PwBaseWorkChain, namespace=self._PW_CURVE_NAMESPACE))
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwBaseWorkChain,
+                namespace=self._PW_CURVE_NAMESPACE
+            )
+        )
         inputs.metadata.call_link_label = self._PW_CURVE_NAMESPACE
-        inputs.structure = self.ctx.current_structure
+        inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for curve calculation.')
-        self.to_context(workchain_curve = running)
+        return ToContext(workchain_curve=running)
 
     def inspect_curve(self):
         workchain = self.ctx.workchain_curve
@@ -316,20 +424,41 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_CURVE
 
         self.report(f'Curve calculation<{self.ctx.workchain_curve.pk}> finished')
-        self.ctx.current_structure = workchain.outputs.structure
-        self.ctx.kpoints = workchain.outputs.kpoints
+        self.ctx.current_structure = workchain.outputs.output_structure
+        
+        # Extract kpoints if available
+        if 'kpoints' in workchain.outputs:
+            self.ctx.kpoints = workchain.outputs.kpoints
+        elif 'create_kpoints_from_distance' in [link.label for link in workchain.base.links.get_outgoing()]:
+            self.ctx.kpoints = workchain.base.links.get_outgoing(
+                link_label_filter='create_kpoints_from_distance'
+            ).first().node.outputs.result
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwBaseWorkChain,
+                namespace=self._PW_CURVE_NAMESPACE
+            )
+        )
 
     def should_run_surface_energy(self):
         return self._PW_SURFACE_ENERGY_NAMESPACE in self.inputs
 
     def run_surface_energy(self):
-        inputs = AttributeDict(self.exposed_inputs(PwBaseWorkChain, namespace=self._PW_SURFACE_ENERGY_NAMESPACE))
+        inputs = AttributeDict(
+            self.exposed_inputs(
+                PwBaseWorkChain,
+                namespace=self._PW_SURFACE_ENERGY_NAMESPACE
+            )
+        )
         inputs.metadata.call_link_label = self._PW_SURFACE_ENERGY_NAMESPACE
-        inputs.structure = self.ctx.current_structure
+        inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
-        self.to_context(workchain_surface_energy = running)
+        return ToContext(workchain_surface_energy=running)
 
     def inspect_surface_energy(self):
         workchain = self.ctx.workchain_surface_energy
@@ -338,8 +467,42 @@ class GSFEWorkChain(ProtocolMixin, WorkChain):
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
 
         self.report(f'Surface energy calculation<{self.ctx.workchain_surface_energy.pk}> finished')
-        self.ctx.current_structure = workchain.outputs.structure
-        self.ctx.kpoints = workchain.outputs.kpoints
+        self.ctx.current_structure = workchain.outputs.output_structure
+        
+        # Extract kpoints if available
+        if 'kpoints' in workchain.outputs:
+            self.ctx.kpoints = workchain.outputs.kpoints
+        
+        # Expose outputs
+        self.out_many(
+            self.exposed_outputs(
+                workchain,
+                PwBaseWorkChain,
+                namespace=self._PW_SURFACE_ENERGY_NAMESPACE
+            )
+        )
+
+    def should_run_sfe(self):
+        """Check if there are more curve points to process."""
+        # This should be implemented based on GSFE curve generation logic
+        # For now, return False to skip the inner loop
+        return False
+    
+    def setup_supercell_kpoints(self):
+        """Setup kpoints for the current curve point."""
+        # This should be implemented based on GSFE curve generation logic
+        pass
+    
+    def run_sfe(self):
+        """Run the SFE calculation for current curve point."""
+        # This should be implemented based on GSFE curve generation logic
+        pass
+    
+    def inspect_sfe(self):
+        """Inspect the SFE calculation results for current curve point."""
+        # This should be implemented based on GSFE curve generation logic
+        pass
 
     def results(self):
+        """Output collected results."""
         self.report(f'Results')

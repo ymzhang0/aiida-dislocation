@@ -1,5 +1,5 @@
 from .sfebase import SFEBaseWorkChain
-from .sfe_spacing import SfeSpacingWorkChain
+from .layer_relax import RigidLayerRelaxWorkChain
 from aiida import orm
 
 class ESFEWorkChain(SFEBaseWorkChain):
@@ -10,13 +10,7 @@ class ESFEWorkChain(SFEBaseWorkChain):
     @classmethod
     def define(cls, spec):
         super().define(spec)
-        
-        spec.input('additional_spacings', valid_type=orm.List, required=False, default=lambda: orm.List(list=[0.0]),
-                    help='The additional spacing to add to the structure.')
-        spec.input('fault_method', valid_type=orm.Str, required=False, default=lambda: orm.Str('removal'),
-                    help="How to generate faulted structures: 'removal', or 'vacuum'.")
-        spec.input('vacuum_ratio', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.1),
-                    help='Vacuum ratio added along the fault normal when using vacuum gliding.')
+
         spec.output('results', valid_type=orm.Dict, required=False, help='Collected ESFE energies for each evaluated spacing.')
         
         spec.exit_code(
@@ -44,41 +38,38 @@ class ESFEWorkChain(SFEBaseWorkChain):
 
     def setup(self):
         super().setup()
-        # Setup surface energy kpoints (only needs to be done once)
-        _, kpoints_scf_mesh = self._get_kpoints_scf()
-        self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf_mesh)
 
     def _get_fault_type(self):
         """Return the fault type for ESFE workchain."""
         return 'extrinsic'
 
-    def inspect_sfe_spacing(self):
-        """Inspect the SfeSpacingWorkChain results and calculate ESFE values."""
-        workchain = self.ctx.workchain_sfe
+    def inspect_layer_relax(self):
+        """Inspect the RigidLayerRelaxWorkChain results and calculate ESFE values."""
+        workchain = self.ctx.workchain_layer_relax
         
         if not workchain.is_finished_ok:
             self.report(
-                f"SfeSpacingWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}"
+                f"RigidLayerRelaxWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}"
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_ESF
         
-        self.report(f'SfeSpacingWorkChain<{workchain.pk}> finished successfully.')
+        self.report(f'RigidLayerRelaxWorkChain<{workchain.pk}> finished successfully.')
         
         # Expose outputs
         self.out_many(
             self.exposed_outputs(
                 workchain,
-                SfeSpacingWorkChain,
-                namespace=self._SFE_NAMESPACE
+                RigidLayerRelaxWorkChain,
+                namespace=self._RIGID_LAYER_RELAX_NAMESPACE
             )
         )
         
-        # Extract results from SfeSpacingWorkChain and calculate ESFE
+        # Extract results from RigidLayerRelaxWorkChain and calculate ESFE
         if 'results' in workchain.outputs:
-            sfe_results = workchain.outputs.results.get_dict().get('sfe', [])
+            relax_results = workchain.outputs.results.get_dict().get('rigid_layer_relax', [])
             self.ctx.esfe_data = []
             
-            for result in sfe_results:
+            for result in relax_results:
                 spacing = result['spacing']
                 energy_ry = result['energy_ry']
                 multiplier = result['multiplier']

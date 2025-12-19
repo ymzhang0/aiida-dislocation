@@ -2,7 +2,6 @@ from .sfebase import SFEBaseWorkChain
 from aiida.common import AttributeDict
 from aiida.engine import ToContext
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
-from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida import orm
 from ase.formula import Formula
 from aiida_dislocation.tools import (
@@ -38,16 +37,13 @@ class TwinningWorkChain(SFEBaseWorkChain):
         super().setup()
         self.ctx.twinning_done = False
         self.ctx.twinning_data = []
-        
-        # Setup surface energy kpoints (only needs to be done once)
-        _, kpoints_scf_mesh = self._get_kpoints_scf()
-        self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf_mesh)
 
     def _get_fault_type(self):
         """Return the fault type for Twinning workchain.
         Twinning is not a fault type, but we need to implement this for the base class.
+        For twinning, we use 'unstable' as the fault type for structure generation.
         """
-        return None  # Twinning is a base structure, not a fault type
+        return 'unstable'  # Use 'unstable' for structure generation purposes
 
     def generate_structures(self):
         """Generate all structures including conventional, cleavaged, and twinning."""
@@ -94,17 +90,18 @@ class TwinningWorkChain(SFEBaseWorkChain):
         
         return True
 
-    def run_sfe_spacing(self):
+    def run_layer_relax(self):
         """Run PwBaseWorkChain directly for twinning (no spacing loop needed)."""
         # Setup kpoints for twinning structure
         faulted_structure_ase = self.ctx.current_structure.get_ase()
         conventional_structure_ase = self.ctx.conventional_structure
         
         z_ratio = faulted_structure_ase.cell.cellpar()[2] / conventional_structure_ase.cell.cellpar()[2]
-        _, kpoints_scf_mesh = self._get_kpoints_scf()
+        kpoints_scf = self._get_kpoints_scf()
         
         from math import ceil
         kpoints_sfe = orm.KpointsData()
+        kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
         kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / z_ratio)])
         
         # Prepare inputs for PwBaseWorkChain
@@ -122,11 +119,11 @@ class TwinningWorkChain(SFEBaseWorkChain):
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for twinning faulted geometry.')
         
-        return ToContext(workchain_sfe=running)
+        return ToContext(workchain_layer_relax=running)
 
-    def inspect_sfe_spacing(self):
+    def inspect_layer_relax(self):
         """Inspect the SFE calculation for twinning."""
-        workchain = self.ctx.workchain_sfe
+        workchain = self.ctx.workchain_layer_relax
 
         if not workchain.is_finished_ok:
             self.report(

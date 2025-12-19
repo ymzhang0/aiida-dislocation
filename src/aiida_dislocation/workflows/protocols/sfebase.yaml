@@ -14,7 +14,7 @@ default_inputs:
           options:
               withmpi: True
 
-  sfe:
+  rigid_layer_relax:
     base_relax:
       pw:
         settings:

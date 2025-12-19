@@ -5,13 +5,12 @@ from aiida.common import AttributeDict
 from aiida.engine import WorkChain, ToContext, while_, append_
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
-from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida_dislocation.tools import get_faulted_structure
 from math import ceil
 import numpy
+from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
-
-class SfeSpacingWorkChain(WorkChain):
+class RigidLayerRelaxWorkChain(ProtocolMixin, WorkChain):
     """WorkChain for looping over additional_spacings and performing SFE calculations.
     
     This workchain handles:
@@ -19,20 +18,21 @@ class SfeSpacingWorkChain(WorkChain):
     - For each spacing: generating faulted structure, setting up kpoints, running calculation
     - Collecting results for all spacings
     
-    It is designed to be called as a sub-workchain from SFEBaseWorkChain
+    It is designed to be called as a sub-workchain from RigidLayerWorkChain
     or other workflows that need to perform SFE calculations for multiple spacings.
     """
     
-    _NAMESPACE = 'sfe_spacing'
+    _NAMESPACE = 'layer_relax'
+    _RELAX_NAMESPACE = 'relax'
     
     @classmethod
     def define(cls, spec):
         super().define(spec)
         
-        spec.input('conventional_structure', valid_type=orm.StructureData, required=True,
+        spec.input('structure', valid_type=orm.StructureData, required=True,
                    help='The conventional structure for generating faulted structures.')
-        spec.input('additional_spacings', valid_type=orm.List, required=True,
-                   help='List of additional spacings to evaluate.')
+        spec.input('layer_spacings', valid_type=orm.List, required=True,
+                   help='List of layer spacings to evaluate.')
         spec.input('fault_type', valid_type=orm.Str, required=True,
                    help="Fault type: 'intrinsic', 'unstable', or 'extrinsic'.")
         spec.input('fault_method', valid_type=orm.Str, required=False,
@@ -45,15 +45,14 @@ class SfeSpacingWorkChain(WorkChain):
                    help='Gliding plane direction.')
         spec.input('n_repeats', valid_type=orm.Int, required=True,
                    help='Number of unit cells to repeat.')
-        spec.input('kpoints_scf_mesh', valid_type=orm.List, required=True,
-                   help='The kpoints mesh from SCF calculation.')
-        spec.input('workchain_type', valid_type=orm.Str, required=False,
-                   default=lambda: orm.Str('PwRelaxWorkChain'),
-                   help='Type of workchain to use: PwRelaxWorkChain or PwBaseWorkChain.')
-        
+        spec.input('kpoints', valid_type=orm.KpointsData, required=True,
+                   help='The kpoints mesh for the relaxation calculation.')
+        spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
+                    help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
+
         spec.expose_inputs(
             PwRelaxWorkChain,
-            namespace=cls._NAMESPACE,
+            namespace=cls._RELAX_NAMESPACE,
             exclude=('structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
             namespace_options={
                 'required': False,
@@ -62,62 +61,97 @@ class SfeSpacingWorkChain(WorkChain):
             }
         )
         
-        spec.expose_inputs(
-            PwBaseWorkChain,
-            namespace=f'{cls._NAMESPACE}_base',
-            exclude=('pw.structure', 'clean_workdir', 'kpoints', 'kpoints_distance'),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for the `PwBaseWorkChain` (used when workchain_type is PwBaseWorkChain).'
-            }
-        )
         
         spec.outline(
             cls.setup,
-            while_(cls.should_run_sfe)(
+            while_(cls.should_run_relax)(
                 cls.setup_supercell_kpoints,
-                cls.run_sfe,
-                cls.inspect_sfe,
+                cls.run_relax,
+                cls.inspect_relax,
             ),
             cls.results,
         )
         
         spec.expose_outputs(
             PwRelaxWorkChain,
-            namespace=cls._NAMESPACE,
+            namespace=cls._RELAX_NAMESPACE,
             namespace_options={'required': False}
         )
-        
-        spec.expose_outputs(
-            PwBaseWorkChain,
-            namespace=f'{cls._NAMESPACE}_base',
-            namespace_options={'required': False}
-        )
-        
-        spec.output('results', valid_type=orm.Dict, required=False,
-                   help='Collected SFE results for all spacings.')
         
         spec.exit_code(
             400,
             'ERROR_SUB_PROCESS_FAILED',
             message='The sub-process failed.',
         )
-    
+
+
+    @classmethod
+    def get_protocol_filepath(cls):
+        """Return ``pathlib.Path`` to the ``.yaml`` file that defines the protocols."""
+        from importlib_resources import files
+        from . import protocols
+        return files(protocols) / f'{cls._NAMESPACE}.yaml'
+
+    @classmethod
+    def get_protocol_overrides(cls) -> dict:
+        """Get the ``overrides`` of the default protocol."""
+        from importlib_resources import files
+        import yaml
+        from . import protocols
+
+        path = files(protocols) / f"{cls._NAMESPACE}.yaml"
+        with path.open() as file:
+            return yaml.safe_load(file)
+
+    @classmethod
+    def get_builder_from_protocol(
+            cls,
+            code,
+            structure,
+            protocol='moderate',
+            overrides=None,
+            **kwargs
+        ):
+        """Return a builder prepopulated with inputs selected according to the chosen protocol.
+        """
+        inputs = cls.get_protocol_inputs(protocol, overrides)
+        args = (code, structure, protocol)
+
+        builder = cls.get_builder()
+
+        # Set up the sub-workchains
+
+        sub_builder = PwRelaxWorkChain.get_builder_from_protocol(
+            *args,
+            overrides=inputs.get(cls._RELAX_NAMESPACE, {}),
+        )
+        # sub_builder.pop('structure', None)
+        sub_builder.pop('clean_workdir', None)
+        sub_builder.pop('kpoints', None)
+        sub_builder.pop('kpoints_distance', None)
+
+        sub_builder['base_relax'].pop('kpoints', None)
+        sub_builder['base_relax'].pop('kpoints_distance', None)
+        sub_builder.pop('base_init_relax', None)
+
+        builder[cls._RELAX_NAMESPACE]._data = sub_builder._data
+
+        builder.structure = structure
+        builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
+        return builder
+
     def setup(self):
         """Initialize context for spacing loop."""
         self.ctx.iteration = 1
-        self.ctx.additional_spacings = self.inputs.additional_spacings.get_list().copy()
-        self.ctx.sfe_data = []
-        self.ctx.kpoints_scf_mesh = self.inputs.kpoints_scf_mesh.get_list()
+        self.ctx.layer_spacings = self.inputs.layer_spacings.get_list().copy()
     
-    def should_run_sfe(self):
+    def should_run_relax(self):
         """Check if there are more spacings to process."""
-        if not self.ctx.additional_spacings:
+        if self.ctx.layer_spacings == []:
             return False
-        
+
         # Get current spacing
-        current_spacing = self.ctx.additional_spacings.pop(0)
+        current_spacing = self.ctx.layer_spacings.pop(0)
         self.ctx.current_spacing = current_spacing
         
         # Generate faulted structure for this spacing
@@ -127,7 +161,7 @@ class SfeSpacingWorkChain(WorkChain):
         
         if fault_method == 'removal':
             _, faulted_structure_data = get_faulted_structure(
-                self.inputs.conventional_structure.get_ase(),
+                self.inputs.structure.get_ase(),
                 fault_type=fault_type,
                 additional_spacing=current_spacing,
                 gliding_plane=gliding_plane,
@@ -137,7 +171,7 @@ class SfeSpacingWorkChain(WorkChain):
         elif fault_method == 'vacuum':
             vacuum_ratio = float(self.inputs.vacuum_ratio.value)
             _, faulted_structure_data = get_faulted_structure(
-                self.inputs.conventional_structure.get_ase(),
+                self.inputs.structure.get_ase(),
                 fault_type=fault_type,
                 additional_spacing=current_spacing,
                 gliding_plane=gliding_plane,
@@ -172,43 +206,30 @@ class SfeSpacingWorkChain(WorkChain):
         return True
     
     def setup_supercell_kpoints(self):
-        """Setup kpoints for the current faulted structure."""
+        """Setup kpoints for the current rigid layer structure."""
         # Calculate kpoints based on z-ratio between faulted and conventional structures
-        faulted_structure_ase = self.ctx.current_structure.get_ase()
-        conventional_structure_ase = self.inputs.conventional_structure.get_ase()
         
-        z_ratio = faulted_structure_ase.cell.cellpar()[2] / conventional_structure_ase.cell.cellpar()[2]
-        kpoints_scf_mesh = self.ctx.kpoints_scf_mesh
+        z_ratio = self.ctx.current_structure.get_ase().cell.cellpar()[2] / self.inputs.structure.get_ase().cell.cellpar()[2]
+        kpoints_mesh = self.inputs.kpoints.get_kpoints_mesh()[0]
         
-        kpoints_sfe = orm.KpointsData()
-        kpoints_sfe.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / z_ratio)])
+        kpoints_relax = orm.KpointsData()
+        kpoints_relax.set_kpoints_mesh(kpoints_mesh[:2] + [ceil(kpoints_mesh[2] / z_ratio)])
         
-        self.ctx.kpoints_sfe = kpoints_sfe
-        self.report(f'Kpoints mesh for SFE (spacing {self.ctx.current_spacing}): {kpoints_sfe.get_kpoints_mesh()[0]}')
+        self.ctx.kpoints_relax = kpoints_relax
+        self.report(f'Kpoints mesh for rigid layer relaxation (spacing {self.ctx.current_spacing}): {kpoints_relax.get_kpoints_mesh()[0]}')
     
-    def run_sfe(self):
-        """Run the SFE calculation for current spacing."""
-        workchain_type = self.inputs.workchain_type.value
-        
-        if workchain_type == 'PwRelaxWorkChain':
-            return self._run_relax_calculation()
-        elif workchain_type == 'PwBaseWorkChain':
-            return self._run_base_calculation()
-        else:
-            raise ValueError(f"Unsupported workchain_type: {workchain_type}")
-    
-    def _run_relax_calculation(self):
-        """Run PwRelaxWorkChain calculation."""
+    def run_relax(self):
+        """Run the rigid layer relaxation calculation for current spacing."""
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwRelaxWorkChain,
-                namespace=self._NAMESPACE
+                namespace=self._RELAX_NAMESPACE
             )
         )
         
         inputs.structure = self.ctx.current_structure
-        inputs.base_relax.kpoints = self.ctx.kpoints_sfe
-        inputs.metadata.call_link_label = f'{self._NAMESPACE}_{self.ctx.iteration}'
+        inputs.base_relax.kpoints = self.ctx.kpoints_relax
+        inputs.metadata.call_link_label = f'relax_{self.ctx.iteration}'
         
         # Apply fault_method specific settings
         fault_method = self.inputs.fault_method.value.lower() if self.inputs.fault_method.value else 'removal'
@@ -237,76 +258,28 @@ class SfeSpacingWorkChain(WorkChain):
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for spacing: {self.ctx.current_spacing}.')
         
-        return {f"workchain_sfe": append_(running)}
+        return {f"workchain_relax": append_(running)}
     
-    def _run_base_calculation(self):
-        """Run PwBaseWorkChain calculation."""
-        inputs = AttributeDict(
-            self.exposed_inputs(
-                PwBaseWorkChain,
-                namespace=f'{self._NAMESPACE}_base'
-            )
-        )
-        
-        inputs.pw.structure = self.ctx.current_structure
-        inputs.kpoints = self.ctx.kpoints_sfe
-        inputs.metadata.call_link_label = f'{self._NAMESPACE}_base_{self.ctx.iteration}'
-        
-        running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for spacing: {self.ctx.current_spacing}.')
-        
-        return {f"workchain_sfe": append_(running)}
-    
-    def inspect_sfe(self):
-        """Inspect the SFE calculation results for current spacing."""
-        workchain = self.ctx.workchain_sfe[-1]
+    def inspect_relax(self):
+        """Inspect the rigid layer relaxation calculation results for current spacing."""
+        workchain = self.ctx.workchain_relax[-1]
         self.ctx.iteration += 1
         
         if not workchain.is_finished_ok:
             self.report(
-                f"Sub-workchain<{workchain.pk}> for spacing {self.ctx.current_spacing} "
+                f"PwRelaxWorkChain<{workchain.pk}> for spacing {self.ctx.current_spacing} "
                 f"failed with exit status {workchain.exit_status}"
             )
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED
         
-        self.report(f'Sub-workchain<{workchain.pk}> for spacing {self.ctx.current_spacing} finished successfully.')
+        self.report(f'PwRelaxWorkChain<{workchain.pk}> for spacing {self.ctx.current_spacing} finished successfully.')
         
         # Extract number of bands for next iteration
         if 'output_parameters' in workchain.outputs:
             self.ctx.nbnd = workchain.outputs.output_parameters.get('number_of_bands')
         
-        # Extract energy
-        total_energy = workchain.outputs.output_parameters.get('energy')
-        
-        # Store results
-        self.ctx.sfe_data.append({
-            'spacing': self.ctx.current_spacing,
-            'iteration': self.ctx.iteration - 1,
-            'energy_ry': float(total_energy) if total_energy else None,
-            'multiplier': self.ctx.current_multiplier,
-        })
-        
-        # Expose outputs for this iteration
-        workchain_type = self.inputs.workchain_type.value
-        if workchain_type == 'PwRelaxWorkChain':
-            self.out_many(
-                self.exposed_outputs(
-                    workchain,
-                    PwRelaxWorkChain,
-                    namespace=self._NAMESPACE
-                )
-            )
-        else:
-            self.out_many(
-                self.exposed_outputs(
-                    workchain,
-                    PwBaseWorkChain,
-                    namespace=f'{self._NAMESPACE}_base'
-                )
-            )
-    
+
+
     def results(self):
         """Output collected results."""
-        if self.ctx.sfe_data:
-            self.out('results', orm.Dict(dict={'sfe': self.ctx.sfe_data}))
-
+        pass

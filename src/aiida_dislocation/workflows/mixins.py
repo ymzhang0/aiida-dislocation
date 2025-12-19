@@ -105,19 +105,20 @@ class EnergyCalculationMixin:
 class KpointsSetupMixin:
     """Mixin for kpoints setup related methods."""
     
-    def _calculate_kpoints_for_structure(self, structure, kpoints_scf_mesh):
+    def _calculate_kpoints_for_structure(self, structure, kpoints_scf):
         """Calculate kpoints mesh for a given structure based on z-ratio.
         
         :param structure: ASE Atoms object
         :param kpoints_scf_mesh: Base kpoints mesh from SCF calculation
         :return: KpointsData object
         """
+        kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
         z_ratio = structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
         kpoints = orm.KpointsData()
         kpoints.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / z_ratio)])
         return kpoints
     
-    def _setup_surface_energy_kpoints(self, kpoints_scf_mesh):
+    def _setup_surface_energy_kpoints(self, kpoints_scf):
         """Setup kpoints for surface energy calculation.
         
         :param kpoints_scf_mesh: Base kpoints mesh from SCF calculation
@@ -125,7 +126,7 @@ class KpointsSetupMixin:
         """
         return self._calculate_kpoints_for_structure(
             self.ctx.cleavaged_structure,
-            kpoints_scf_mesh
+            kpoints_scf
         )
 
 

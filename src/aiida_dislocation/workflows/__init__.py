@@ -13,8 +13,8 @@ from .twinning import (
 from .gsfe import (
     GSFEWorkChain,
 )
-from .sfe_spacing import (
-    SfeSpacingWorkChain,
+from .layer_relax import (
+    RigidLayerRelaxWorkChain,
 )
 
 __all__ = (
@@ -23,5 +23,5 @@ __all__ = (
     'USFEWorkChain',
     'TwinningWorkChain',
     'GSFEWorkChain',
-    'SfeSpacingWorkChain',
+    'RigidLayerRelaxWorkChain',
 )

@@ -118,12 +118,13 @@ class A1GlidingSystem(GlidingSystem):
             extrinsic=FaultConfig(
                 possible=True,
                 removal_layers=[3, 5],
+                burger_vectors=[[2/3, 2/3, 0]],
                 periodicity=False
             ),
             unstable=FaultConfig(
                 possible=True,
                 removal_layers=[3, 4],
-                burger_vectors=[[0, 2/3, 0]],
+                burger_vectors=[[2/3, 2/3, 0]],
                 periodicity=False,
                 interface=3,
             )
