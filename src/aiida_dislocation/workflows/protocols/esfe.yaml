@@ -14,14 +14,16 @@ default_inputs:
         options:
             withmpi: True
 
-  esfe:
-    base_relax:
-      pw:
-        settings:
-          USE_FRACTIONAL: True
-        metadata:
-          options:
-            withmpi: True
+  layer_relax:
+    relax:
+      base_relax:
+        pw:
+          settings:
+            USE_FRACTIONAL: True
+          metadata:
+            options:
+              withmpi: True
+
 
   surface_energy:
     pw:

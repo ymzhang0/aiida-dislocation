@@ -1,6 +1,6 @@
 from aiida import orm
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext, if_, while_, append_
+from aiida.engine import WorkChain, ToContext, if_
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
@@ -9,7 +9,6 @@ from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 from aiida_dislocation.tools import (
     calculate_surface_area, 
-    get_faulted_structure,
     get_conventional_structure,
     get_cleavaged_structure,
 )
@@ -244,6 +243,7 @@ class SFEBaseWorkChain(
             (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             overrides = inputs.get(namespace, {})
+            
             if workchain_type == RigidLayerRelaxWorkChain:
                 overrides['relax']['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
                 overrides['relax']['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
@@ -258,11 +258,9 @@ class SFEBaseWorkChain(
             )
             sub_builder.pop('clean_workdir', None)
 
-            if namespace != cls._RELAX_NAMESPACE:
-                sub_builder.pop('kpoints', None)
-                sub_builder.pop('kpoints_distance', None)
-
             builder[namespace]._data = sub_builder._data
+        
+        builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
 
         builder.layer_spacings = orm.List(list=inputs.get('layer_spacings', [0.0]))
         builder.structure = structure
@@ -482,6 +480,7 @@ class SFEBaseWorkChain(
         inputs.layer_spacings = self.inputs.layer_spacings
         inputs.vacuum_ratio = self.inputs.vacuum_ratio
         
+        inputs.metadata.call_link_label = self._RIGID_LAYER_RELAX_NAMESPACE
 
         running = self.submit(RigidLayerRelaxWorkChain, **inputs)
         self.report(f'launching RigidLayerRelaxWorkChain<{running.pk}> for rigid layer relaxation calculations over all spacings.')

@@ -111,7 +111,7 @@ class A1GlidingSystem(GlidingSystem):
             intrinsic=FaultConfig(
                 possible=True,
                 removal_layers=[3],
-                burger_vectors=[[0, 1/3, 0]],
+                burger_vectors=[[1/3, 1/3, 0]],
                 periodicity=False,
                 interface=3,
             ),

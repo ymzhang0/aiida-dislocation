@@ -2,8 +2,7 @@
 
 from aiida import orm
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext, while_, append_
-from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+from aiida.engine import WorkChain, while_, append_
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from aiida_dislocation.tools import get_faulted_structure
 from math import ceil

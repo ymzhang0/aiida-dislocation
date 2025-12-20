@@ -25,7 +25,6 @@ class TwinningWorkChain(SFEBaseWorkChain):
                 'required': False,
             }
         )
-        spec.output('results', valid_type=orm.Dict, required=False, help='Collected twinning energy and metadata.')
         
         spec.exit_code(
             404,
@@ -167,5 +166,4 @@ class TwinningWorkChain(SFEBaseWorkChain):
         self.ctx.twinning_done = True
 
     def results(self):
-        if getattr(self.ctx, 'twinning_data', None):
-            self.out('results', orm.Dict(dict={'twinning': self.ctx.twinning_data}))
+        pass
