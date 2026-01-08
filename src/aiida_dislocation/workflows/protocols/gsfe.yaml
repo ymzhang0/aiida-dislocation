@@ -1,25 +1,41 @@
-metadata:
-    options:
-        withmpi: True
+default_inputs:
+  clean_workdir: True
+  kpoints_distance: 0.3
+  fault_method: general
 
-parameters:
-    CONTROL:
-        calculation: scf
-    SYSTEM:
-        nosym: False
-        noinv: False
+  relax:
+    base_relax:
+      pw:
+        metadata:
+            options:
+                withmpi: True
 
-uc:
+  scf:
     pw:
-        metadata: *metadata
-        parameters: *parameters
+      metadata:
+        options:
+            withmpi: True
 
-sf:
+  sfe:
     pw:
-        metadata: *metadata
-        parameters: *parameters
+      metadata:
+        options:
+            withmpi: True
 
-surface:
+  surface_energy:
     pw:
-        metadata: *metadata
-        parameters: *parameters
+      metadata:
+        options:
+            withmpi: True
+
+default_protocol: moderate
+protocols:
+  moderate:
+    kpoints_distance: 0.3
+    description: 'Protocol to perform a USF calculation at normal precision at moderate computational cost.'
+  precise:
+    description: 'Protocol to perform a USF calculation at high precision at higher computational cost.'
+    kpoints_distance: 0.15
+  fast:
+    description: 'Protocol to perform a USF calculation at low precision at minimal computational cost for testing purposes.'
+    kpoints_distance: 0.5

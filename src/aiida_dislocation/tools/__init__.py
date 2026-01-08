@@ -1,5 +1,10 @@
 from .structure import (
-    _GLIDING_SYSTEMS,
+    A1GlidingSystem,
+    A2GlidingSystem,
+    B1GlidingSystem,
+    B2GlidingSystem,
+    C1bGlidingSystem,
+    L21GlidingSystem,
     group_by_layers,
     get_strukturbericht,
     get_unstable_faulted_structure,
@@ -8,6 +13,7 @@ from .structure import (
     get_conventional_structure,
     get_cleavaged_structure,
     calculate_surface_area,
+    read_structure_from_file,
 )
 
 from .cut import (
@@ -24,8 +30,13 @@ from .cut import (
 )
 
 __all__ = (
-    # Core structure functions
-    '_GLIDING_SYSTEMS',
+    # Core structure x
+    'A1GlidingSystem',
+    'A2GlidingSystem',
+    'B1GlidingSystem',
+    'B2GlidingSystem',
+    'C1bGlidingSystem',
+    'L21GlidingSystem',
     'group_by_layers',
     'get_strukturbericht',
     'get_unstable_faulted_structure',
@@ -34,6 +45,7 @@ __all__ = (
     'get_conventional_structure',
     'get_cleavaged_structure',
     'calculate_surface_area',
+    'read_structure_from_file',
     # Visualization functions (for notebooks/plotting)
     'list_to_tex',
     'draw_sphere',

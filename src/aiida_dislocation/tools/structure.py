@@ -40,12 +40,12 @@ class AttributeDict(dict):
 @dataclass
 class FaultConfig:
     """Configuration for a fault type (intrinsic, unstable, or extrinsic)."""
-    removal_layers: ty.Optional[list[int]] = None
+    removal_layers: ty.Union[list[int], int] = None
     burger_vectors: ty.Optional[list[list[float]]] = None
     periodicity: bool = False
     possible: bool = True
     interface: int = 0
-
+    nsteps: int = 1
 
 @dataclass
 class GlidingPlaneConfig:
@@ -56,7 +56,7 @@ class GlidingPlaneConfig:
     intrinsic: FaultConfig = field(default_factory=FaultConfig)
     unstable: FaultConfig = field(default_factory=FaultConfig)
     extrinsic: FaultConfig = field(default_factory=FaultConfig)
-
+    general: FaultConfig = field(default_factory=FaultConfig)
 
 class GlidingSystem(ABC):
     """Base class for gliding system configurations."""
@@ -86,22 +86,38 @@ class GlidingSystem(ABC):
         """List all supported gliding planes."""
         return list(self._planes.keys())
 
-
 # Concrete implementations
 class A1GlidingSystem(GlidingSystem):
     """A1 (FCC) gliding system."""
     
     def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            n_layers=2,
+            intrinsic=FaultConfig(possible=False),
+            extrinsic=FaultConfig(possible=False),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 0, 0],
+                    ],
+                interface=(2, ),
+                nsteps = 10
+            )
+        )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
             transformation_matrix_c=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
             n_layers=2,
             intrinsic=FaultConfig(possible=False),
             extrinsic=FaultConfig(possible=False),
-            unstable=FaultConfig(
+            general=FaultConfig(
                 possible=True,
-                interface=2,
-                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]]
+                burger_vectors=[
+                    [0, 1, 0],
+                    ],
+                interface=(2, ),
+                nsteps = 10
             )
         )
         self._planes['111'] = GlidingPlaneConfig(
@@ -123,71 +139,299 @@ class A1GlidingSystem(GlidingSystem):
             ),
             unstable=FaultConfig(
                 possible=True,
-                removal_layers=[3, 4],
-                burger_vectors=[[2/3, 2/3, 0]],
+                removal_layers=[-1],
+                burger_vectors=[[1/6, 1/6, 0]],
                 periodicity=False,
                 interface=3,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1/3, 1/3, 0],
+                    [1/3, 1/3, 0]
+                    ],
+                interface=(3, 4),
+                nsteps = 8
             )
         )
-
 
 class A2GlidingSystem(GlidingSystem):
     """A2 (BCC) gliding system."""
     
     def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 1, 0], [1, 0, 1], [0, 1, 1]],
+            n_layers=2,
+            intrinsic=FaultConfig(
+                removal_layers=[2]
+                ),
+            unstable=FaultConfig(
+                removal_layers=[2]
+                ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1, 0, 0]],
+                interface=[2, ],
+                nsteps = 10
+            )
+        )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, 0], [0, 0, 1], [2, 1, 1]],
             transformation_matrix_c=[[0, 1, -1], [0, 1, 1], [2, 1, 1]],
             n_layers=2,
-            intrinsic=FaultConfig(removal_layers=[2]),
-            unstable=FaultConfig(removal_layers=[2])
+            intrinsic=FaultConfig(
+                removal_layers=[2]
+                ),
+            unstable=FaultConfig(
+                removal_layers=[2]
+                ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1, 0, 0]],
+                interface=[2,],
+                nsteps = 10
+            )
         )
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[-1, 1, 0], [-1, 0, 1], [1, 1, 1]],
             transformation_matrix_c=[[-2, 1, 1], [0, -1, 1], [2, 2, 2]],
             n_layers=3,
-            intrinsic=FaultConfig(removal_layers=[3], interface=3),
-            extrinsic=FaultConfig(removal_layers=[3, 5]),
-            unstable=FaultConfig(removal_layers=[3, 4], interface=3)
+            intrinsic=FaultConfig(
+                removal_layers=[3], interface=3,
+                burger_vectors=[[1/3, 1/3, 0]],
+                periodicity=False,
+            ),
+            extrinsic=FaultConfig(
+                removal_layers=[3, 5],
+                burger_vectors=[[2/3, 2/3, 0]],
+                periodicity=False,
+            ),
+            unstable=FaultConfig(
+                removal_layers=[3, 4], interface=3,
+                burger_vectors=[[2/3, 2/3, 0]],
+                periodicity=False,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1/3, 1/3, 0],
+                    [1/3, 1/3, 0]
+                    ],
+                interface=(3, 4),
+                nsteps = 8
+            )
         )
 
 class B1GlidingSystem(GlidingSystem):
     """B1 (NaCl) gliding system."""
     
     def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            n_layers=2,
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1, 0, 0]],
+                interface=[2, ],
+                nsteps = 10
+            )
+        )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
             n_layers=2,
-            unstable=FaultConfig(
-                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
-                interface=2,
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [0, 1, 0],
+                    ],
+                interface=[2, ],
+                nsteps = 10
             )
         )
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
             transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
             n_layers=6,
-            intrinsic=FaultConfig(removal_layers=[6, 7, 8, 9], interface=6),
-            unstable=FaultConfig(removal_layers=[6, 7], interface=6)
+            intrinsic=FaultConfig(
+                removal_layers=[6, 7, 8, 9], interface=6,
+                burger_vectors=[[1/3, 1/3, 0]],
+                periodicity=False,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1/3, 1/3, 0],
+                    ],
+                interface=(6, ),
+                nsteps = 10
+            )
+        )
+
+
+class B2GlidingSystem(GlidingSystem):
+    """B2 (CsCl) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            n_layers=2,
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1, 0, 0]],
+                interface=[2, ],
+                nsteps = 10
+            )
+        )
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, -1], [1, 0, 0], [0, 1, 1]],
+            n_layers=2,
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 1, 0],
+                    ],
+                interface=[2, ],
+                nsteps = 10
+            )
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            n_layers=6,
+            intrinsic=FaultConfig(
+                removal_layers=[6, 7, 8, 9], interface=6,
+                burger_vectors=[[1/3, 1/3, 0]],
+                periodicity=False,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1/3, 1/3, 0],
+                    ],
+                interface=(6, ),
+                nsteps = 10
+            )
         )
 
 class C1bGlidingSystem(GlidingSystem):
     """C1b (Half-Heusler) gliding system."""
     
     def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            n_layers=4,
+            intrinsic=FaultConfig(
+                removal_layers=[2],
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
+                periodicity=False,
+                interface=2,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    ],
+                interface=(4, 4),
+                nsteps = 8
+            )
+        )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
-            n_layers=6,
-            intrinsic=FaultConfig(removal_layers=[2]),
-            unstable=FaultConfig(removal_layers=[2]),
-            extrinsic=FaultConfig(possible=False)
+            n_layers=2,
+            intrinsic=FaultConfig(
+                removal_layers=[2],
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
+                periodicity=False,
+                interface=2,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    ],
+                interface=(2, 2),
+                nsteps = 8
+            )
         )
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
             transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
             n_layers=9,
-            intrinsic=FaultConfig(removal_layers=[10, 11, 12, 13, 14, 15]),
-            unstable=FaultConfig(removal_layers=[10, 11, 12])
+            intrinsic=FaultConfig(
+                removal_layers=[9, 10, 11, 12, 13, 14],
+                burger_vectors=[[1/3, 1/3, 0]],
+                periodicity=False,
+                interface=9,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1/3, 1/3, 0]],
+                interface=9,
+                nsteps = 10
+            )
+        )
+
+
+class L21GlidingSystem(GlidingSystem):
+    """L21 (Heusler) gliding system."""
+    
+    def _register_planes(self):
+        self._planes['100'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            n_layers=4,
+            intrinsic=FaultConfig(
+                removal_layers=[2],
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
+                periodicity=False,
+                interface=2,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    ],
+                interface=(4, 4),
+                nsteps = 6
+            )
+        )
+        self._planes['011'] = GlidingPlaneConfig(
+            transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            n_layers=2,
+            intrinsic=FaultConfig(
+                removal_layers=[2],
+                burger_vectors=[[1/2, 0, 0], [0, 1/2, 0], [1/2, 1/2, 0]],
+                periodicity=False,
+                interface=2,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    ],
+                interface=(2, 2),
+                nsteps = 6
+            )
+        )
+        self._planes['111'] = GlidingPlaneConfig(
+            transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
+            transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            n_layers=9,
+            intrinsic=FaultConfig(
+                removal_layers=[9, 10, 11, 12, 13, 14],
+                burger_vectors=[[1/3, 1/3, 0]],
+                periodicity=False,
+                interface=9,
+            ),
+            general=FaultConfig(
+                possible=True,
+                burger_vectors=[[1/3, 1/3, 0]],
+                interface=9,
+                nsteps = 10
+            )
         )
 
 class E21GlidingSystem(GlidingSystem):
@@ -212,7 +456,9 @@ _GLIDING_SYSTEM_REGISTRY: dict[str, type[GlidingSystem]] = {
     'A1': A1GlidingSystem,
     'A2': A2GlidingSystem,
     'B1': B1GlidingSystem,
+    'B2': B2GlidingSystem,
     'C1_b': C1bGlidingSystem,
+    'L2_1': L21GlidingSystem,
     'E_21': E21GlidingSystem,
 }
 
@@ -235,302 +481,6 @@ def get_gliding_system(strukturbericht: str) -> GlidingSystem:
     return _GLIDING_SYSTEM_CACHE[strukturbericht]
 
 
-# Legacy dictionary for backward compatibility (deprecated)
-_GLIDING_SYSTEMS = {
-    'A1': {
-        '011':{
-            'transformation_matrix': [
-                [0, 1, -1],
-                [-1, 1, 1],
-                [1, 0, 0]
-            ],
-            'transformation_matrix_c': [
-                [0, 1, -1],
-                [-1, 1, 1],
-                [1, 0, 0]
-            ],
-            'n_layers': 2,
-            # 'intrinsic_removal': [2],
-            # 'extrinsic_removal': None,
-            # 'unstable_removal': [2],
-            'intrinsic_possible': False,
-            'extrinsic_possible': False,
-            'unstable_possible': True,
-            'unstable_burger_vectors': [
-                [1/2, 0, 0],
-                [0, 1/2, 0],
-                [1/2, 1/2, 0]
-                ]
-        },
-        '111':{
-            'transformation_matrix': [
-                [1, -1, 0],
-                [1, 0, -1],
-                [1, 1, 1]
-            ],
-            'transformation_matrix_c': [
-                [1, -1, 0],
-                [1, 1, -2],
-                [1, 1, 1]
-            ],
-            'n_layers': 3,
-            'intrinsic_possible': True,
-            'intrinsic_burger_vectors': [
-                [0, 1/3, 0],
-            ],
-            'intrinsic_removal': [3],
-            'periodicity_intrinsic_gliding': False,
-            'extrinsic_possible': True,
-            'extrinsic_removal': [3, 5],
-            'periodicity_extrinsic_gliding': False,
-            'unstable_possible': True,
-            'unstable_removal': [3, 4],
-            'periodicity_unstable_gliding': False,
-            'unstable_burger_vectors': [
-                [0, 2/3, 0],
-            ],
-        }
-    },
-    'A2': {
-        '011':{
-            'transformation_matrix': [
-                [0, 1, 0],
-                [0, 0, 1],
-                [2, 1, 1]
-            ],
-            'transformation_matrix_c': [
-                [0, 1, -1],
-                [0, 1, 1],
-                [2, 1, 1]
-            ],
-            'n_layers': 2,
-            'intrinsic_removal': [2],
-            # 'extrinsic_removal': None,
-            'unstable_removal': [2],
-        },
-        '111':{
-            'transformation_matrix': [
-                [-1, 1, 0],
-                [-1, 0, 1],
-                [1, 1, 1]
-        ],
-            'transformation_matrix_c': [
-                [-2, 1, 1],
-                [0, -1, 1],
-                [2, 2, 2]
-        ],
-            'n_layers': 3,
-            'intrinsic_removal': [3],
-            'extrinsic_removal': [3, 5],
-            'unstable_removal': [3, 4],
-        },
-    },
-    'B1': {
-        '011':{
-            'transformation_matrix': [
-                [0, 1, -1],
-                [-1, 1, 1],
-                [1, 0, 0]
-            ],
-            'n_layers': 2,
-            # 'intrinsic_removal': [2],
-            # 'extrinsic_removal': None,
-            # 'unstable_removal': [2],
-            'unstable_burger_vectors': [
-                [1/2, 0, 0],
-                [0, 1/2, 0],
-                [1/2, 1/2, 0]
-            ]
-        },
-        '111':{
-            'transformation_matrix': [
-                [1, -1, 0],
-                [1, 0, -1],
-                [1, 1, 1]
-            ],
-            'transformation_matrix_c': [
-                [1, -1, 0],
-                [1, 1, -2],
-                [1, 1, 1]
-            ],
-            'n_layers': 6,
-            'intrinsic_removal': [6, 7, 8, 9],
-            'unstable_removal': [6, 7],
-        }
-    },
-    'C1_b':{
-        '011':{
-            'transformation_matrix': [
-                [0, 1, -1],
-                [-1, 1, 1],
-                [1, 0, 0]
-            ],
-            'n_layers': 6,
-            'intrinsic_removal': [2],
-            'unstable_removal': [2],
-            'extrinsic_removal': None,
-        },
-        '111':{
-            'transformation_matrix': [
-                [1, -1, 0],
-                [1, 0, -1],
-                [1, 1, 1]
-            ],
-            'transformation_matrix_c': [
-                [1, -1, 0],
-                [1, 1, -2],
-                [1, 1, 1]
-            ],
-            'n_layers': 9,
-            'intrinsic_removal': [10, 11, 12, 13, 14, 15],
-            'unstable_removal': [10, 11, 12,],
-            # 'extrinsic_removal': [3, 5],
-        }
-    },
-    'E_21':{
-        '011':{
-            'transformation_matrix': [
-                [0, 0, 1],
-                [-1, 1, 0],
-                [1, 1, 0]
-            ],
-            'n_layers': 4,
-            'intrinsic_removal': [4, 5],
-            'extrinsic_removal': None,
-        },
-        '111':{
-            'transformation_matrix': [
-                [1, -1, 0],
-                [1, 0, -1],
-                [1, 1, 1]
-            ],
-            'n_layers': 6,
-            'intrinsic_removal': [6, 7, 8, 9],
-            'unstable_removal': [6, 7],
-            # 'extrinsic_removal': [6, 7, 8, 12, 13, 14],
-        }
-    }
-}
-
-_IMPLEMENTED_SLIPPING_SYSTEMS = {
-    'A1': {
-        'info': 'FCC element crystal <space group #225, prototype Cu>. '
-                'Usually, the gliding plane is 111.',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[010]',
-                    'faulting_possible': True,
-                    },
-            '110': {'stacking': 'AB',
-                    'slipping_direction': '1/2[112]',
-                    'faulting_possible': True,
-                    },
-            '111': {'stacking': 'ABC',
-                    'slipping_direction': '1/2[110]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'A2': {
-        'info': 'FCC element crystal <space group #227, prototype V>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[110]',
-                    'faulting_possible': True,
-                    },
-            '110': {'stacking': 'AB',
-                    'slipping_direction': '1/2[001]',
-                    'faulting_possible': True,
-                    },
-            '111': {'stacking': 'ABC',
-                    'slipping_direction': '1/2[011]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'A15': {
-        'info': 'A3B crystal <space group #223, prototype Nb3Sn>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[110]',
-                    'faulting_possible': True,
-                    },
-            '110': {'stacking': 'AB',
-                    'slipping_direction': '1/2[001]',
-                    'faulting_possible': True,
-                    },
-            '111': {'stacking': 'ABC',
-                    'slipping_direction': '1/2[011]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'B1': {
-        'info': 'FCC element crystal <space group #225, prototype NaCl>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[010]',
-                    'faulting_possible': True,
-                    },
-            '110': {'stacking': 'AB',
-                    'slipping_direction': '1/2[112]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'B2': {
-        'info': 'FCC element crystal <space group #229, prototype CsCl>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[010]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'C1': {
-        'info': 'We are doing pyrite-type structure. <space group #205, prototype FeS2>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'ABCD',
-                    'slipping_direction': '1/2[100]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'C1b': {
-        'info': 'We are doing half-heusler-type structure. <space group #216, prototype MgSiAl>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'ABCD',
-                    'slipping_direction': '1/2[100]',
-                    'faulting_possible': True,
-                    },
-            '110': {'stacking': 'AB',
-                    'slipping_direction': '1/2[110]',
-                    'faulting_possible': True,
-                    },
-            '111': {'stacking': 'ABC',
-                    'slipping_direction': '1/2[111]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-    'E21': {
-        'info': 'We are doing perovskite-type structure. <space group #221, prototype BaTiO3>. '
-                'I don\'t know the usual gliding plane. ',
-        'possible_gliding_planes': {
-            '100': {'stacking': 'AB',
-                    'slipping_direction': '1/2[010]',
-                    'faulting_possible': True,
-                    },
-        }
-    },
-}
-
 @deprecated(reason="This function is not used in any workflow. Use ASE's built-in methods instead.")
 def check_bravais_lattice(ase_atoms):
     bl = ase_atoms.cell.get_bravais_lattice(eps=1e-6)
@@ -547,13 +497,23 @@ def read_structure_from_file(
         'Al',
         'V',
         'Cu',
+        'NiTi',
         'TaRu3C',
         'Nb3Sn',
+        'CrH',
         'AsTe',
         'NbCoSb',
+        'ZrRuSb',
+        'TiSbRu',
+        'TiAlPt',
         'MoN',
+        'HfAlPd2',
+        'ZrGaNi2',
+        'YSnPd2',
+        'ZrAlNi2',
         'MgB2',
-        'TaSe2'
+        'TaSe2',
+        'VC'
         ]:
         import importlib.resources
         data_path = importlib.resources.files('aiida_dislocation.data')
@@ -670,7 +630,7 @@ def build_atoms_from_stacking_removal(
     # Remove layers from the end to avoid index shifts while updating zs
     for removed_layer in reversed(removed_layers_sorted):
         spacing = zs[removed_layer] - zs[removed_layer - 1]
-        if spacing < additional_spacing[1]:
+        if spacing + additional_spacing[1] < 0.0:
             raise ValueError(f"Spacing between removed layers is less than additional spacing: {spacing} < {additional_spacing}")
         removed_spacing += spacing
         zs[removed_layer:] -= spacing
@@ -848,6 +808,74 @@ def build_atoms_from_burger_vector(
 
     return atoms
 
+def update_faults_list(faults, interface, burger_vector):
+    """
+    Update faults list by adding burger_vector to layers at and after interface.
+    
+    Args:
+        faults: numpy array of shape (n_layers, 3) containing burger_vectors for each layer
+        interface: Layer index where fault starts (layers at and after this index will be updated)
+        burger_vector: Burger vector to add to layers at/after interface
+        
+    Returns:
+        Updated faults array
+    """
+    faults = faults.copy()
+    faults[interface:] += burger_vector
+    return faults
+
+def build_atoms_from_burger_vector_general(
+    new_cell,
+    zs,
+    layers_dict,
+    stacking_order_supercell,
+    burger_vector_for_cell,
+    faults,
+    print_info = False,
+    ):
+    """
+    Build atoms structure with burger vector faults.
+    
+    Args:
+        new_cell: Cell matrix
+        zs: List of z coordinates for layers
+        layers_dict: Dictionary of layers
+        stacking_order_supercell: Stacking order for supercell
+        faults: numpy array of shape (n_layers, 3) containing burger_vectors for each layer
+        print_info: Whether to print debug info
+        
+    Returns:
+        Atoms object with faults applied
+    """
+    atoms = Atoms()
+    
+    # Calculate cell tilt from total burger_vector in xy plane
+    # Sum all faults to get total burger_vector for cell tilt
+    burger_vector_cart = burger_vector_for_cell[:2] @ new_cell[:2]
+    new_cell_tilted = deepcopy(new_cell)
+    new_cell_tilted[-1] += burger_vector_cart
+    
+    atoms.set_cell(new_cell_tilted)
+
+    for layer_label, fault in zip(stacking_order_supercell, faults):
+        z = zs.pop(0)
+        for atom in layers_dict[layer_label]['atoms']:
+            new_atom = deepcopy(atom)
+            scaled_position = new_atom.scaled_position + fault
+            scaled_position[-1] = z
+            # Calculate absolute position using original cell (without tilt)
+            # This preserves the absolute spatial position of atoms
+            absolute_position = scaled_position @ new_cell
+            # Set the absolute position directly; ASE will handle fractional coordinate conversion
+            # when we access scaled_position later with the tilted cell
+            new_atom.position = absolute_position
+            atoms.append(new_atom)
+
+    if zs:
+        raise ValueError(f"zs is not empty: {zs}")
+
+    return atoms
+
 @deprecated(reason="This function is not used in any workflow. Use build_atoms_from_burger_vector instead.")
 def build_atoms_from_burger_vector_with_vacuum(
     ase_atoms_uc,
@@ -919,9 +947,11 @@ def get_strukturbericht(
         "A1": read_structure_from_file('Al').get_pymatgen(),          # Copper (Cu)
         'A2': read_structure_from_file('V').get_pymatgen(),      # Vandadium (V)
         "B1": read_structure_from_file('AsTe').get_pymatgen(),   # Arsenic Telluride (AsTe)
+        "B2": read_structure_from_file('NiTi').get_pymatgen(),   # Arsenic Telluride (AsTe)
         "B_h": read_structure_from_file('MoN').get_pymatgen(),   # Arsenic Telluride (AsTe)
         "A15": read_structure_from_file('Nb3Sn').get_pymatgen(),        # Nb3Sn (Nb3Sn)
         "C1_b": read_structure_from_file('NbCoSb').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "L2_1": read_structure_from_file('HfAlPd2').get_pymatgen(),            # Gold-Copper (AuCu3)
         "C_7": read_structure_from_file('TaSe2').get_pymatgen(),            # Gold-Copper (AuCu3)
         "C_32": read_structure_from_file('MgB2').get_pymatgen(),            # Gold-Copper (AuCu3)
         "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Gold-Copper (AuCu3)
@@ -1226,94 +1256,16 @@ class FaultedStructureResult(ty.TypedDict):
     mode: ty.Literal['removal', 'gliding']
     structures: list[FaultedStructureEntry]
 
-
-def _build_faulted_structure(
-    fault_config: FaultConfig,
-    ase_atoms_t,
-    n_unit_cells: int,
-    layers_dict: dict,
-    additional_spacing: float = 0.0,
-    prefer_mode: ty.Optional[str] = 'removal',
-    vacuum_ratio: float = 0.0,
-    print_info: bool = False,
-) -> ty.Optional[FaultedStructureResult]:
-    """Build a faulted structure based on the fault configuration.
-    
-    Args:
-        fault_config: FaultConfig object containing fault configuration
-        ase_atoms_t: Transformed atoms structure
-        n_unit_cells: Number of unit cells
-        layers_dict: Dictionary of layers
-        additional_spacing: Additional spacing to add
-        prefer_mode: Preferred mode ('removal' or 'vacuum')
-        vacuum_ratio: Vacuum ratio when using vacuum mode
-        print_info: Whether to print debug information
-        
-    Returns:
-        FaultedStructureResult dictionary or None if not configured
-    """
-    if not fault_config.possible:
-        return None
-    
-    # Prefer removal mode if available and requested
-    if prefer_mode == 'removal' and fault_config.removal_layers is not None:
-        structure = build_atoms_from_stacking_removal(
-            ase_atoms_t,
-            n_unit_cells,
-            fault_config.removal_layers,
-            layers_dict,
-            additional_spacing=(fault_config.interface, additional_spacing),
-            print_info=print_info
-        )
-        return {
-            'mode': 'removal',
-            'structures': [{
-                'structure': structure,
-                'layers': fault_config.removal_layers,
-            }],
-        }
-    
-    # Use burger vector (gliding/vacuum) mode if available
-    if fault_config.burger_vectors is not None:
-        structures_list: list[FaultedStructureEntry] = []
-        for burger_vector in fault_config.burger_vectors:
-            if prefer_mode == 'vacuum' and vacuum_ratio > 0.0:
-                structure = build_atoms_from_burger_vector_with_vacuum(
-                    ase_atoms_t,
-                    n_unit_cells,
-                    burger_vector,
-                    layers_dict,
-                    vacuum_ratio=vacuum_ratio,
-                    print_info=print_info
-                )
-            else:
-                structure = build_atoms_from_burger_vector(
-                    ase_atoms_t,
-                    n_unit_cells,
-                    burger_vector,
-                    layers_dict,
-                    print_info=print_info
-                )
-            structures_list.append({
-                'structure': structure,
-                'burger_vector': burger_vector,
-            })
-        return {
-            'mode': 'gliding' if prefer_mode != 'vacuum' else 'vacuum',
-            'structures': structures_list,
-        }
-    
-    return None
-
 def get_faulted_structure(
         ase_atoms_conventional,
+        fault_mode: str,
         fault_type: str,
-        additional_spacing: float,
+        additional_spacing: float = 0.0,
         gliding_plane: ty.Optional[str] = None,
         n_unit_cells: int = 3,
-        fault_mode: ty.Optional[str] = None,
         vacuum_ratio: float = 0.0,
         print_info: bool = False,
+        **kwargs,
     ) -> tuple[str, ty.Optional[FaultedStructureResult]]:
     """Generate faulted structure of a specific type from conventional cell structure.
     
@@ -1335,7 +1287,13 @@ def get_faulted_structure(
                 * structures: list of entries with structure plus metadata
             - None if the fault type is not available
     """
-    if fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
+    if fault_mode not in ['removal', 'vacuum', 'general']:
+        raise ValueError(
+            f"fault_mode must be one of 'removal', 'vacuum', 'general', "
+            f"got '{fault_mode}'"
+        )
+
+    if fault_mode == 'removal' and fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
         raise ValueError(
             f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', "
             f"got '{fault_type}'"
@@ -1345,19 +1303,120 @@ def get_faulted_structure(
         ase_atoms_conventional, gliding_plane, print_info
     )
 
-    # Build the requested faulted structure
     fault_config = getattr(plane_config, fault_type)
-    faulted_structure = _build_faulted_structure(
-        fault_config,
-        ase_atoms_conventional,
-        n_unit_cells,
-        layers_dict,
-        additional_spacing=additional_spacing,
-        prefer_mode=fault_mode,
-        vacuum_ratio=vacuum_ratio,
-        print_info=print_info,
-    )
 
+    if not fault_config.possible:
+        return None
+    
+    # Prefer removal mode if available and requested
+    if fault_mode == 'removal' and fault_config.removal_layers is not None:
+        if fault_config.removal_layers is not None:
+            raise ValueError(
+                f"Fault type {fault_type} is not available for removal mode."
+            )
+        structure = build_atoms_from_stacking_removal(
+            ase_atoms_conventional,
+            n_unit_cells,
+            fault_config.removal_layers,
+            layers_dict,
+            additional_spacing=(fault_config.interface, additional_spacing),
+            print_info=print_info
+        )
+        faulted_structure = {
+            'mode': 'removal',
+            'structures': [{
+                'structure': structure,
+                'layers': fault_config.removal_layers,
+            }],
+        }
+
+    # Use burger vector (gliding/vacuum) mode if available
+    if fault_mode == 'vacuum' and vacuum_ratio > 0.0 and fault_config.burger_vectors is not None:
+        structures_list: list[FaultedStructureEntry] = []
+        for burger_vector in fault_config.burger_vectors:
+            structure = build_atoms_from_burger_vector_with_vacuum(
+                ase_atoms_conventional,
+                n_unit_cells,
+                burger_vector,
+                layers_dict,
+                vacuum_ratio=vacuum_ratio,
+                print_info=print_info
+            )
+
+            structures_list.append({
+                'structure': structure,
+                'burger_vector': burger_vector,
+            })
+        faulted_structure = {
+            'mode': 'vacuum',
+            'structures': structures_list,
+        }
+    
+    if fault_mode == 'general' and fault_config.burger_vectors is not None:
+        structures_list: list[FaultedStructureEntry] = []
+        nsteps = kwargs.get('nsteps', fault_config.nsteps)
+        stacking_order = ''.join(layers_dict.keys())
+        if not isinstance(n_unit_cells, int) or n_unit_cells < 2:
+            raise ValueError(f"Invalid number of unit cells {n_unit_cells}. Must be an integer >= 2.")
+
+        zs = [(value['z'] + layer)/n_unit_cells for layer in range(n_unit_cells) for value in layers_dict.values()]
+        stacking_order_supercell = stacking_order * n_unit_cells
+
+        new_cell = ase_atoms_conventional.cell.array.copy()
+        new_cell[-1] *= (n_unit_cells)
+
+        # Initialize faults list: each layer starts with zero burger_vector
+        faults = numpy.zeros((len(stacking_order_supercell), 3))
+        burger_vector_for_cell = numpy.array([0.0, 0.0, 0.0])
+        # Process each burger_vector and interface pair
+        # print(faults)
+        structure = build_atoms_from_burger_vector_general(
+            new_cell,
+            deepcopy(zs),
+            layers_dict,
+            stacking_order_supercell,
+            burger_vector_for_cell,
+            faults,
+            print_info=print_info
+        )
+        
+        structures_list.append({
+            'structure': structure,
+            'burger_vector': burger_vector_for_cell.tolist(),
+        })
+        for burger_idx, (_burger_vector, interface) in enumerate(zip(fault_config.burger_vectors, fault_config.interface)):
+            burger_vector_step = numpy.array(_burger_vector) / nsteps
+            burger_vector_for_cell += burger_vector_step
+            # Update faults list: add burger_vector_step to layers at/after interface
+            for step in range(
+                int(burger_idx>0), nsteps
+                ):
+                burger_vector_for_cell += burger_vector_step
+                faults = update_faults_list(faults, interface, burger_vector_step)
+
+                # Build structure with current faults
+                # print(faults)
+                structure = build_atoms_from_burger_vector_general(
+                    new_cell,
+                    deepcopy(zs),
+                    layers_dict,
+                    stacking_order_supercell,
+                    burger_vector_for_cell,
+                    faults,
+                    print_info=print_info
+                )
+                
+                structures_list.append({
+                    'structure': structure,
+                    'burger_vector': burger_vector_for_cell.tolist(),
+                })
+                
+            # Note: faults have already been updated step by step in the loop above
+            # No need to update again here, as the final step already has the full burger_vector applied
+        faulted_structure = {
+            'mode': 'gliding',
+            'structures': structures_list,
+        }
     return (strukturbericht, faulted_structure)
 
 
