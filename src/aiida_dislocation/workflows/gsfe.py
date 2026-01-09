@@ -506,7 +506,9 @@ class GSFEWorkChain(
             )
         )
         inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
-        inputs.pw.structure = orm.StructureData(ase=self.ctx.cleavaged_structure)
+        inputs.pw.structure = orm.StructureData(
+            ase=self.ctx.cleavaged_structure
+            )
         inputs.kpoints = self.ctx.kpoints_surface_energy
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure')

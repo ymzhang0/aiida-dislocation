@@ -509,16 +509,14 @@ class SFEBaseWorkChain(
                 namespace=self._SURFACE_ENERGY_NAMESPACE
                 )
             )
-
         inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
-
         inputs.pw.structure = orm.StructureData(
             ase=self.ctx.cleavaged_structure
             )
         inputs.kpoints = self.ctx.kpoints_surface_energy
 
         running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwCalculation<{running.pk}> for surface energy calculation.')
+        self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure')
 
         return {f"workchain_surface_energy": running}
 
@@ -553,7 +551,7 @@ class SFEBaseWorkChain(
                 / self.ctx.conventional_multiplier 
                 * self.ctx.surface_multiplier
             )
-            surface_energy = energy_difference / 2 / self.ctx.surface_area * self._eVA22Jm2
+            surface_energy = energy_difference / self.ctx.surface_area * self._eVA22Jm2
             self.report(
                 f'Surface energy evaluated from conventional geometry: {surface_energy} J/m^2'
             )
