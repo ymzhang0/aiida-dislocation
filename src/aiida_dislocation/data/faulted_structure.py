@@ -46,6 +46,17 @@ from aiida_dislocation.tools.structure_builder import (
 from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
+
+class GeneralFaultStructurePoint(ty.TypedDict):
+    """Single point on a generalized stacking fault path."""
+
+    structure: Atoms
+    burger_vector: list[float]
+    direction_name: str
+    path_index: int
+    step_index: int
+
+
 class FaultedStructure:
     """
     A class to handle dislocation structures and their manipulations using ASE Atoms.
@@ -155,7 +166,7 @@ class FaultedStructure:
         if len(layers_dict) != plane_config.n_layers:
             raise ValueError(
                 f'Layer count mismatch: found {len(layers_dict)} layers, but expected {plane_config.n_layers} for '
-                f'{self.strukturbericht} with gliding plane {gliding_plane}.'
+                f'{self.strukturbericht} with gliding plane {self._gliding_plane}.'
             )
             
         cleavaged_atoms = build_atoms_surface(
@@ -173,7 +184,7 @@ class FaultedStructure:
                             **kwargs) -> ty.Optional[Atoms]:
         """
         Generate faulted structure.
-        Returns: (result_dict containing ASE Atoms)
+        Returns faulted structures for the requested mode.
         """
         if fault_mode not in ['removal', 'vacuum', 'general']:
             raise ValueError(f"fault_mode must be one of 'removal', 'vacuum', 'general', got '{fault_mode}'")
@@ -233,7 +244,7 @@ class FaultedStructure:
 
         # General Mode
         if fault_mode == 'general' and fault_config.burger_vectors is not None:
-            structures_list = []
+            structures_list: list[GeneralFaultStructurePoint] = []
             nsteps = kwargs.get('nsteps', fault_config.nsteps)
             stacking_order = ''.join(layers_dict.keys())
             
@@ -245,10 +256,11 @@ class FaultedStructure:
 
             if isinstance(fault_config.burger_vectors, dict):
                 for direction_name, path_points in fault_config.burger_vectors.items():
-                    for segment in path_points:
+                    for path_index, segment in enumerate(path_points):
                         burgers_vector_for_cell = numpy.zeros(3)
                         faults = numpy.zeros((len(stacking_order_supercell), 3))
-                        
+                        step_index = 0
+
                         # Initial state (0 displacement)
                         structure = build_atoms_from_burger_vector_general(
                             new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
@@ -257,11 +269,15 @@ class FaultedStructure:
                         structures_list.append({
                             'structure': structure,
                             'burger_vector': burgers_vector_for_cell.tolist(),
+                            'direction_name': direction_name,
+                            'path_index': path_index,
+                            'step_index': step_index,
                         })
-                        
+
                         for interface, burgers_vector in segment:
                             burgers_vector_step = numpy.array(burgers_vector) / nsteps
                             for _ in range(1, 1+nsteps):
+                                step_index += 1
                                 faults = update_faults(faults, interface, burgers_vector_step)
                                 burgers_vector_for_cell += burgers_vector_step
                                 structure = build_atoms_from_burger_vector_general(
@@ -271,6 +287,9 @@ class FaultedStructure:
                                 structures_list.append({
                                     'structure': structure,
                                     'burger_vector': burgers_vector_for_cell.tolist(),
+                                    'direction_name': direction_name,
+                                    'path_index': path_index,
+                                    'step_index': step_index,
                                 })
                                 
             faulted_result = structures_list

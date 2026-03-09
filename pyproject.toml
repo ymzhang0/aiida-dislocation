@@ -83,6 +83,7 @@ tests = [
 [project.entry-points.'aiida.tools.data.orbitals']
 
 [project.entry-points.'aiida.workflows']
+'dislocation.gsfe' = 'aiida_dislocation.workflows.gsfe:GSFEWorkChain'
 'dislocation.isfe' = 'aiida_dislocation.workflows.isfe:ISFEWorkChain'
 'dislocation.esfe' = 'aiida_dislocation.workflows.esfe:ESFEWorkChain'
 'dislocation.usfe' = 'aiida_dislocation.workflows.usfe:USFEWorkChain'
