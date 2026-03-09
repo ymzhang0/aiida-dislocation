@@ -25,14 +25,20 @@ dependencies = [
     'aiida_core[atomic_tools]~=2.6',
     'aiida-quantumespresso>=4.11',
     'aiida-pseudo~=1.1',
+    'ase',
     'click~=8.0',
     'deprecated>=1.2.0',
     'importlib_resources',
     'jsonschema',
+    'matplotlib',
     'numpy',
     'pydantic~=2.0',
     'packaging',
+    'pymatgen',
     'qe-tools~=2.0',
+    'pyyaml',
+    'rich',
+    'sympy',
     'xmlschema~=2.0'
 ]
 
