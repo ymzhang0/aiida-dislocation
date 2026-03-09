@@ -10,6 +10,7 @@ def build_atoms_surface(
     n_unit_cells,
     layers_dict,
     print_info = False,
+    vacuum_spacing = 1.0,
     ):
     atoms = Atoms()
 
@@ -18,10 +19,10 @@ def build_atoms_surface(
 
     stacking_order = n_unit_cells * ''.join(layers_dict.keys())
 
-    zs = [(value['z'] + cell)/n_unit_cells/2 for cell in range(n_unit_cells) for value in layers_dict.values()]
+    zs = [(value['z'] + cell)/n_unit_cells/(1+vacuum_spacing) for cell in range(n_unit_cells) for value in layers_dict.values()]
 
     new_cell = ase_atoms_uc.cell.array.copy()
-    new_cell[-1] *= 2 * n_unit_cells
+    new_cell[-1] *= n_unit_cells * (1+vacuum_spacing)
     atoms.set_cell(new_cell)
     for layer_label, z in zip(stacking_order, zs):
         for atom in layers_dict[layer_label]['atoms']:

@@ -68,6 +68,7 @@ tests = [
 [project.entry-points.'aiida.calculations']
 
 [project.entry-points.'aiida.data']
+'dislocation.faulted_structure' = 'aiida_dislocation.data.faulted_structure:FaultedStructureData'
 
 [project.entry-points.'aiida.parsers']
 

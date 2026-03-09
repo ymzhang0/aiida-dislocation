@@ -1,0 +1,40 @@
+default_inputs:
+  clean_workdir: True
+  kpoints_distance: 0.3
+  vacuum_spacings: 
+   - 0.5
+   - 0.8
+   - 1.1
+   - 1.4
+   - 1.7
+   - 2.0
+  relax:
+    base_relax:
+      pw:
+        metadata:
+            options:
+                withmpi: True
+
+  scf:
+    pw:
+      metadata:
+        options:
+            withmpi: True
+
+  surface_energy:
+    pw:
+      metadata:
+        options:
+            withmpi: True
+
+default_protocol: moderate
+protocols:
+  moderate:
+    kpoints_distance: 0.3
+    description: 'Protocol to perform a USF calculation at normal precision at moderate computational cost.'
+  precise:
+    description: 'Protocol to perform a USF calculation at high precision at higher computational cost.'
+    kpoints_distance: 0.15
+  fast:
+    description: 'Protocol to perform a USF calculation at low precision at minimal computational cost for testing purposes.'
+    kpoints_distance: 0.5

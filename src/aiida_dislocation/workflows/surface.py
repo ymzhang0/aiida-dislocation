@@ -19,20 +19,19 @@ from .mixins import (
     WorkflowInspectionMixin,
 )
 
-class GSFEWorkChain(
+class SurfaceEnergyWorkChain(
     ProtocolMixin,
     StructureGenerationMixin,
     EnergyCalculationMixin,
     KpointsSetupMixin,
     WorkflowInspectionMixin,
     WorkChain):
-    """GSFE WorkChain"""
+    """Surface Energy WorkChain"""
 
-    _NAMESPACE = 'gsfe'
+    _NAMESPACE = 'surface'
 
     _RELAX_NAMESPACE = "relax"
     _SCF_NAMESPACE = "scf"
-    _SFE_NAMESPACE = "sfe"
     _SURFACE_ENERGY_NAMESPACE = "surface_energy"
     
     @classmethod
@@ -46,6 +45,8 @@ class GSFEWorkChain(
         spec.input('structure', valid_type=orm.StructureData, required=True,)
         spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
                 help='The distance between kpoints for the kpoints generation')
+        spec.input('vacuum_spacings', valid_type=orm.List, required=False, default=lambda: orm.List(default_value=[1.0]),
+                    help='The vacuum spacings for the surface energy calculation.')
         spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
                     help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
 
@@ -80,21 +81,7 @@ class GSFEWorkChain(
                 'help': 'Inputs for the `PwBaseWorkChain` for SCF calculation.'
             }
         )
-        spec.expose_inputs(
-            PwBaseWorkChain,
-            namespace=cls._SFE_NAMESPACE,
-            exclude=(
-                'pw.structure',
-                'clean_workdir',
-                'kpoints',
-                'kpoints_distance',
-            ),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for the `PwBaseWorkChain` for USF calculation.'
-            }
-        )
+
 
         spec.expose_inputs(
             PwBaseWorkChain,
@@ -123,11 +110,7 @@ class GSFEWorkChain(
                 cls.run_scf,
                 cls.inspect_scf,
             ),
-            while_(cls.should_run_sfe)(
-                cls.run_sfe,
-                cls.inspect_sfe,
-            ),
-            if_(cls.should_run_surface_energy)(
+            while_(cls.should_run_surface_energy)(
                 cls.run_surface_energy,
                 cls.inspect_surface_energy,
             ),
@@ -168,16 +151,11 @@ class GSFEWorkChain(
         )
         spec.exit_code(
             403,
-            "ERROR_SUB_PROCESS_FAILED_USF",
-            message='The `PwBaseWorkChain` for the USF run failed.',
-        )
-        spec.exit_code(
-            404,
             "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
             message='The `PwBaseWorkChain` for the surface energy run failed.',
         )
         spec.exit_code(
-            405,
+            404,
             "ERROR_NO_STRUCTURE_TYPE_DETECTED",
             message='The structure type is not detected.',
         )
@@ -232,7 +210,6 @@ class GSFEWorkChain(
         for namespace, workchain_type in [
             (cls._RELAX_NAMESPACE, PwRelaxWorkChain),
             (cls._SCF_NAMESPACE, PwBaseWorkChain),
-            (cls._SFE_NAMESPACE, PwBaseWorkChain),
             (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             overrides = inputs.get(namespace, {})
@@ -266,6 +243,7 @@ class GSFEWorkChain(
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
+        builder.vacuum_spacings = orm.List(inputs['vacuum_spacings'])
 
         return builder
 
@@ -319,25 +297,9 @@ class GSFEWorkChain(
             gliding_plane=gliding_plane,
             n_unit_cells=self.inputs.n_repeats.value,
         )
-        
-        try:
-            faulted_structure_data = faulted_structure.get_faulted_structure(
-                fault_mode = 'general',
-                fault_type = 'general',
-                additional_spacing=0.0,
-            )
-        except ValueError:
-            self.report(f'Faulted structure not available for spacing {current_spacing}. Skipping.')
-            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
-
-        self.ctx.faulted_structure = faulted_structure_data
-
-        # Get cleavaged structure (based on conventional cell)
-        cleavaged_structure = faulted_structure.get_cleavaged_structure()
-
+        self.ctx.faulted_structure = faulted_structure
         # Store structures directly in context
         self.ctx.conventional_structure = faulted_structure.get_conventional_structure()
-        self.ctx.cleavaged_structure = cleavaged_structure
 
         self.ctx.surface_area = faulted_structure.surface_area
         
@@ -352,9 +314,6 @@ class GSFEWorkChain(
         )
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
             self.ctx.conventional_structure
-        )
-        self.ctx.surface_multiplier = self._calculate_structure_multiplier(
-            cleavaged_structure
         )
 
     def _get_kpoints_scf(self):
@@ -378,7 +337,11 @@ class GSFEWorkChain(
 
     def setup(self):
         self.ctx.iteration = 1
-        self.ctx.number_of_structures = len(self.ctx.faulted_structure)
+        self.ctx.vacuum_spacings = sorted(self.inputs.vacuum_spacings.get_list(), reverse=True)
+        self.ctx.cleavaged_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+            vacuum_spacing=self.ctx.vacuum_spacings[0]
+        )
+        self.ctx.number_of_spacings = len(self.ctx.vacuum_spacings)
         # Get kpoints_scf
         kpoints_scf = self._get_kpoints_scf()
         
@@ -428,57 +391,20 @@ class GSFEWorkChain(
             )
         )
 
-    def should_run_sfe(self):
+    def should_run_surface_energy(self):
 
-        if self._SFE_NAMESPACE not in self.inputs:
+        if self._SURFACE_ENERGY_NAMESPACE not in self.inputs:
             return False
 
-        if self.ctx.faulted_structure == []:
+        if self.ctx.vacuum_spacings == []:
             return False
-        
-        faulted_structure = self.ctx.faulted_structure.pop(0)
-        self.ctx.current_structure = faulted_structure['structure']
-        self.ctx.current_slipping_vector = faulted_structure['burger_vector']
 
-        z_ratio = self.ctx.current_structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
-        kpoints_mesh = self.ctx.kpoints_scf.get_kpoints_mesh()[0]
-        
-        kpoints_sfe = orm.KpointsData()
-        kpoints_sfe.set_kpoints_mesh(kpoints_mesh[:2] + [ceil(kpoints_mesh[2] / z_ratio)])
-        
-        self.ctx.kpoints_sfe = kpoints_sfe
+        self.ctx.current_spacing = self.ctx.vacuum_spacings.pop() 
+        self.ctx.cleavaged_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+            vacuum_spacing=self.ctx.current_spacing
+        )
 
         return True
-
-    def run_sfe(self):
-        inputs = AttributeDict(
-            self.exposed_inputs(
-                PwBaseWorkChain,
-                namespace=self._SFE_NAMESPACE
-            )
-        )
-        inputs.metadata.call_link_label = f"structure_{self.ctx.iteration:02d}"
-
-        inputs.pw.structure = orm.StructureData(ase=self.ctx.current_structure)
-        inputs.kpoints = self.ctx.kpoints_sfe
-
-        running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for faulted structure {self.ctx.iteration}/{self.ctx.number_of_structures}...')
-
-        self.ctx.iteration += 1
-
-        return {f"workchain_sfe": running}
-
-    def inspect_sfe(self):
-        workchain = self.ctx.workchain_sfe
-        if not workchain.is_finished_ok:
-            self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
-
-        self.report(f'PwBaseWorkChain<{self.ctx.workchain_sfe.pk}> finished')
-
-    def should_run_surface_energy(self):
-        return self._SURFACE_ENERGY_NAMESPACE in self.inputs
 
     def run_surface_energy(self):
         inputs = AttributeDict(
@@ -487,13 +413,18 @@ class GSFEWorkChain(
                 namespace=self._SURFACE_ENERGY_NAMESPACE
             )
         )
-        inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
-        inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.cleavaged_structure
-            )
-        inputs.kpoints = self.ctx.kpoints_surface_energy
+        inputs.metadata.call_link_label = f"spacing_{self.ctx.iteration:02d}"
+        self.ctx.current_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+            vacuum_spacing=self.ctx.current_spacing
+        )
+        inputs.pw.structure = orm.StructureData(ase=self.ctx.current_structure)
+        inputs.kpoints = self.ctx.kpoints_surface_energy 
+
         running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure')
+        self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure {self.ctx.iteration}/{self.ctx.number_of_spacings}...')
+
+        self.ctx.iteration += 1
+
         return {f"workchain_surface_energy": running}
 
     def inspect_surface_energy(self):
@@ -503,16 +434,6 @@ class GSFEWorkChain(
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
 
         self.report(f'PwBaseWorkChain<{self.ctx.workchain_surface_energy.pk}> finished')
-
-        # Expose outputs
-        self.out_many(
-            self.exposed_outputs(
-                workchain,
-                PwBaseWorkChain,
-                namespace=self._SURFACE_ENERGY_NAMESPACE
-            )
-        )
-
 
     def results(self):
         """Output collected results."""

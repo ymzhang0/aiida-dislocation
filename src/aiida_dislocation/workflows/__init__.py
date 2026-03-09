@@ -16,6 +16,9 @@ from .gsfe import (
 from .layer_relax import (
     RigidLayerRelaxWorkChain,
 )
+from .surface import (
+    SurfaceEnergyWorkChain,
+)
 
 __all__ = (
     'ISFEWorkChain',
@@ -24,4 +27,5 @@ __all__ = (
     'TwinningWorkChain',
     'GSFEWorkChain',
     'RigidLayerRelaxWorkChain',
+    'SurfaceEnergyWorkChain',
 )

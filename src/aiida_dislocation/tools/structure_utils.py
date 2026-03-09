@@ -46,6 +46,8 @@ def read_structure_from_file(
         'Nb3Sn',
         'CrH',
         'AsTe',
+        'NaCl',
+        'KCl',
         'NbCoSb',
         'ZrRuSb',
         'TiSbRu',
@@ -216,6 +218,6 @@ def calculate_surface_area(ase_atoms) -> float:
     Returns:
         float: Surface area in Angstrom^2
     """
-    cell = ase_atoms.get_cell()
+    cell = ase_atoms.cell
     # Assuming surface is defined by vector 0 and 1 (standard for this package)
     return numpy.linalg.norm(numpy.cross(cell[0], cell[1]))
