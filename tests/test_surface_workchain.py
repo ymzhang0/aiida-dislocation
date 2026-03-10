@@ -6,6 +6,7 @@ import pytest
 from aiida import orm
 from ase.build import bulk
 
+from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 from aiida_dislocation.workflows.gsfe import GSFEWorkChain
 from aiida_dislocation.workflows.surface import SurfaceEnergyWorkChain
 
@@ -82,3 +83,34 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     assert results['results']['1.000000']['surface_energy_j_m2'] == pytest.approx(0.18)
     assert results['results']['0.500000']['workchain_pk'] == 101
     assert results['results']['1.000000']['workchain_uuid'] == 'uuid-102'
+
+
+def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
+    aiida_profile_clean,
+    aluminum_structure,
+) -> None:
+    """Surface workflow should build and expose ``CleavagedStructureData``."""
+    builder = SurfaceEnergyWorkChain.get_builder()
+    builder.structure = aluminum_structure
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.n_repeats = orm.Int(4)
+    builder.gliding_plane = orm.Str('111')
+    builder.vacuum_spacings = orm.List(list=[0.5, 1.0])
+    builder.clean_workdir = orm.Bool(False)
+    builder.pop('relax', None)
+    builder.pop('scf', None)
+    builder.pop('surface_energy', None)
+
+    process = SurfaceEnergyWorkChain(builder)
+    captured_outputs = {}
+
+    def _capture_output(label: str, node: orm.Data) -> None:
+        captured_outputs[label] = node
+
+    process.out = _capture_output  # type: ignore[method-assign]
+    result = process.generate_structures()
+
+    assert result is None
+    assert isinstance(process.ctx.cleavaged_structure_data, CleavagedStructureData)
+    assert 'cleavaged_structure_data' in captured_outputs
+    assert captured_outputs['cleavaged_structure_data'].uuid == process.ctx.cleavaged_structure_data.uuid

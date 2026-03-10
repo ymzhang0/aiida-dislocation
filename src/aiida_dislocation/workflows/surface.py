@@ -8,7 +8,7 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 
-from aiida_dislocation.data.faulted_structure import FaultedStructure
+from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 
 from .mixins import (
     StructureGenerationMixin,
@@ -143,6 +143,12 @@ class SurfaceEnergyWorkChain(
             valid_type=orm.Dict,
             required=False,
             help='Aggregated surface-energy results for all evaluated vacuum spacings.',
+        )
+        spec.output(
+            'cleavaged_structure_data',
+            valid_type=CleavagedStructureData,
+            required=False,
+            help='The provenance-tracked cleavaged-structure data used by the surface workflow.',
         )
         
         spec.exit_code(
@@ -299,16 +305,20 @@ class SurfaceEnergyWorkChain(
             self.ctx.current_structure = self.inputs.structure
         
         gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
-        faulted_structure = FaultedStructure(
-            self.ctx.current_structure.get_ase(),
-            gliding_plane=gliding_plane,
-            n_unit_cells=self.inputs.n_repeats.value,
-        )
-        self.ctx.faulted_structure = faulted_structure
-        # Store structures directly in context
-        self.ctx.conventional_structure = faulted_structure.get_conventional_structure()
+        try:
+            cleavaged_structure_data = CleavagedStructureData(
+                ase=self.ctx.current_structure.get_ase(),
+                gliding_plane=gliding_plane,
+                n_unit_cells=self.inputs.n_repeats.value,
+            )
+            cleavaged_structure_data.store()
+        except ValueError as exception:
+            self.report(f'Failed to prepare cleavaged structure data: {exception}')
+            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.surface_area = faulted_structure.surface_area
+        self.ctx.cleavaged_structure_data = cleavaged_structure_data
+        self.ctx.conventional_structure = cleavaged_structure_data.get_conventional_structure()
+        self.ctx.surface_area = cleavaged_structure_data.surface_area
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
 
@@ -319,6 +329,7 @@ class SurfaceEnergyWorkChain(
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
             self.ctx.conventional_structure
         )
+        self.out('cleavaged_structure_data', cleavaged_structure_data)
 
     def _get_kpoints_scf(self):
         """Get or create kpoints_scf. Returns kpoints_scf KpointsData object."""
@@ -343,7 +354,7 @@ class SurfaceEnergyWorkChain(
         self.ctx.iteration = 1
         self.ctx.vacuum_spacings = sorted(self.inputs.vacuum_spacings.get_list(), reverse=True)
         self.ctx.surface_results = []
-        self.ctx.cleavaged_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+        self.ctx.cleavaged_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
             vacuum_spacing=self.ctx.vacuum_spacings[0]
         )
         self.ctx.number_of_spacings = len(self.ctx.vacuum_spacings)
@@ -406,7 +417,7 @@ class SurfaceEnergyWorkChain(
             return False
 
         self.ctx.current_spacing = self.ctx.vacuum_spacings.pop() 
-        self.ctx.cleavaged_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+        self.ctx.cleavaged_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
             vacuum_spacing=self.ctx.current_spacing
         )
 
@@ -420,7 +431,7 @@ class SurfaceEnergyWorkChain(
             )
         )
         inputs.metadata.call_link_label = f"spacing_{self.ctx.iteration:02d}"
-        self.ctx.current_structure = self.ctx.faulted_structure.get_cleavaged_structure(
+        self.ctx.current_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
             vacuum_spacing=self.ctx.current_spacing
         )
         inputs.pw.structure = orm.StructureData(ase=self.ctx.current_structure)
