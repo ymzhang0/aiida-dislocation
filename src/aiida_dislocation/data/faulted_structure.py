@@ -1,25 +1,25 @@
+from __future__ import annotations
+
 import typing as ty
+from copy import deepcopy
+
 import numpy
-from math import ceil
+from aiida.common.exceptions import ModificationNotAllowed
+from aiida.orm import Data
 from ase import Atoms
 from ase.build import make_supercell
-from copy import deepcopy
-from aiida.orm import Data
-from ase.io.jsonio import encode, decode as ase_decode
+from ase.io.jsonio import decode as ase_decode
+from ase.io.jsonio import encode
 
 from aiida_dislocation.tools.structure_utils import (
     get_strukturbericht,
     group_by_layers,
-    # is_primitive_cell, # Requires StructureData? Let's check or reimplement for ASE
-    get_elements_for_wyckoff_symbols as tool_get_elements_for_wyckoff_symbols, # Might require StructureData
-    # get_kpoints_mesh_for_supercell, # Helper for AiiDA Kpoints, maybe keep but takes primitive types?
-    calculate_surface_area as tool_calculate_surface_area,
-    AttributeDict
 )
 from aiida_dislocation.data.gliding_systems import (
     GlidingSystem,
+    GlidingPlaneConfig,
     get_gliding_system,
-    FaultConfig
+    FaultConfig,
 )
 from aiida_dislocation.tools.structure_builder import (
     build_atoms_surface,
@@ -30,18 +30,6 @@ from aiida_dislocation.tools.structure_builder import (
     build_atoms_from_burger_vector,
     update_faults
 )
-
-# Implementation Note: 
-# tools.is_primitive_cell and tools.get_elements_for_wyckoff_symbols in structure_utils.py 
-# currently take orm.StructureData. If I cannot change them easily without breaking tools,
-# I might need to adapt them here or provide alternative implementations for ASE atoms.
-# Since user said "remove aiida relation", I should probably reimplement minimal checks for ASE atoms
-# or assume structure_utils can handle ASE atoms (I need to check structure_utils).
-
-# Checked structure_utils previously:
-# is_primitive_cell(structure: orm.StructureData) -> calls get_pymatgen()
-# get_elements_for_wyckoff_symbols(structure: orm.StructureData) -> calls get_pymatgen_structure()
-# So valid concern. I will import adapters or rewrite small helpers using pymatgen directly if needed.
 
 from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
@@ -57,16 +45,21 @@ class GeneralFaultStructurePoint(ty.TypedDict):
     step_index: int
 
 
+GeneralFaultStructureResult = list[GeneralFaultStructurePoint]
+FaultedStructureResult = ty.Union[Atoms, list[dict[str, ty.Any]], GeneralFaultStructureResult]
+
+
 class FaultedStructure:
     """
     A class to handle dislocation structures and their manipulations using ASE Atoms.
     """
     
     def __init__(
-        self, ase_atoms: Atoms,
+        self,
+        ase_atoms: Atoms,
         n_unit_cells: int,
-        gliding_plane: str = None,
-        ):
+        gliding_plane: ty.Optional[str] = None,
+    ) -> None:
         """
         Initialize with an ASE Atoms object (assumed unit cell).
         """
@@ -81,6 +74,16 @@ class FaultedStructure:
     def unit_cell(self) -> Atoms:
         """Get the original unit cell structure."""
         return self._ase_atoms
+
+    @property
+    def n_unit_cells(self) -> int:
+        """Get the number of repeated unit cells."""
+        return self._n_unit_cells
+
+    @property
+    def gliding_plane(self) -> str:
+        """Get the stored gliding plane."""
+        return self._gliding_plane
 
     @property
     def strukturbericht(self) -> str:
@@ -108,7 +111,7 @@ class FaultedStructure:
         return pmg_struct.composition == prim_pmg.composition
     
     @property
-    def wyckoff_elements(self) -> dict:
+    def wyckoff_elements(self) -> dict[str, str]:
         """Get Wyckoff symbols for ASE atoms."""
         pmg_struct = AseAtomsAdaptor.get_structure(self.unit_cell)
         sga = SpacegroupAnalyzer(pmg_struct, symprec=1e-5)
@@ -122,17 +125,19 @@ class FaultedStructure:
         # Assuming surface is defined by vector 0 and 1 (standard for this package)
         return numpy.linalg.norm(numpy.cross(cell[0], cell[1]))
     
-    def _prepare_plane_data(self):
-        """Helper to get plane config and default plane."""
-        if not self._gliding_plane:
-            self._gliding_plane = self.gliding_system.default_plane
-        
-        plane_config = self.gliding_system.get_plane(self._gliding_plane)
-        return plane_config
+    def _get_effective_gliding_plane(self) -> str:
+        """Return the configured gliding plane or the default for the detected gliding system."""
+        return self.gliding_plane or self.gliding_system.default_plane
 
-    def get_conventional_structure(self, 
-                                 P: ty.Optional[ty.Union[list, 'numpy.ndarray']] = None,
-                                 print_info: bool = False) -> Atoms:
+    def _prepare_plane_data(self) -> GlidingPlaneConfig:
+        """Helper to get plane config for the effective gliding plane."""
+        return self.gliding_system.get_plane(self._get_effective_gliding_plane())
+
+    def get_conventional_structure(
+        self,
+        P: ty.Optional[ty.Union[list[ty.Any], 'numpy.ndarray']] = None,
+        print_info: bool = False,
+    ) -> Atoms:
         """
         Generate conventional structure.
         """
@@ -150,8 +155,11 @@ class FaultedStructure:
         
         return ase_atoms_conventional
 
-    def get_cleavaged_structure(self, vacuum_spacing: float = 1.0,
-                              print_info: bool = False) -> Atoms:
+    def get_cleavaged_structure(
+        self,
+        vacuum_spacing: float = 1.0,
+        print_info: bool = False,
+    ) -> Atoms:
         """
         Generate cleavaged surface structure from a conventional structure.
         """
@@ -166,11 +174,11 @@ class FaultedStructure:
         if len(layers_dict) != plane_config.n_layers:
             raise ValueError(
                 f'Layer count mismatch: found {len(layers_dict)} layers, but expected {plane_config.n_layers} for '
-                f'{self.strukturbericht} with gliding plane {self._gliding_plane}.'
+                f'{self.strukturbericht} with gliding plane {self._get_effective_gliding_plane()}.'
             )
             
         cleavaged_atoms = build_atoms_surface(
-            conventional_structure, self._n_unit_cells, layers_dict, print_info=print_info,
+            conventional_structure, self.n_unit_cells, layers_dict, print_info=print_info,
             vacuum_spacing=vacuum_spacing
         )
         return cleavaged_atoms
@@ -181,7 +189,7 @@ class FaultedStructure:
                             additional_spacing: float = 0.0,
                             vacuum_ratio: float = 0.0,
                             print_info: bool = False,
-                            **kwargs) -> ty.Optional[Atoms]:
+                            **kwargs) -> ty.Optional[FaultedStructureResult]:
         """
         Generate faulted structure.
         Returns faulted structures for the requested mode.
@@ -190,7 +198,7 @@ class FaultedStructure:
             raise ValueError(f"fault_mode must be one of 'removal', 'vacuum', 'general', got '{fault_mode}'")
 
         if fault_mode == 'removal' and fault_type not in ['intrinsic', 'unstable', 'extrinsic']:
-           raise ValueError(f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', got '{fault_type}'")
+            raise ValueError(f"fault_type must be one of 'intrinsic', 'unstable', or 'extrinsic', got '{fault_type}'")
 
         if print_info:
             print(f'Strukturbericht {self.strukturbericht} detected')
@@ -202,7 +210,7 @@ class FaultedStructure:
         layers_dict = group_by_layers(conventional_structure)
         
         if len(layers_dict) != plane_config.n_layers:
-             raise ValueError(
+            raise ValueError(
                 f'Layer count mismatch: found {len(layers_dict)} layers, but expected {plane_config.n_layers}.'
             )
 
@@ -216,7 +224,7 @@ class FaultedStructure:
         if fault_mode == 'removal' and fault_config.removal_layers is not None:
             structure = build_atoms_from_stacking_removal(
                 conventional_structure,
-                self._n_unit_cells,
+                self.n_unit_cells,
                 fault_config.removal_layers,
                 layers_dict,
                 additional_spacing=(fault_config.interface, additional_spacing),
@@ -230,7 +238,7 @@ class FaultedStructure:
             for burger_vector in fault_config.burger_vectors:
                 structure = build_atoms_from_burger_vector_with_vacuum(
                     conventional_structure,
-                    self._n_unit_cells,
+                    self.n_unit_cells,
                     burger_vector,
                     layers_dict,
                     vacuum_ratio=vacuum_ratio,
@@ -248,11 +256,11 @@ class FaultedStructure:
             nsteps = kwargs.get('nsteps', fault_config.nsteps)
             stacking_order = ''.join(layers_dict.keys())
             
-            zs = [(value['z'] + layer)/self._n_unit_cells for layer in range(self._n_unit_cells) for value in layers_dict.values()]
-            stacking_order_supercell = stacking_order * self._n_unit_cells
+            zs = [(value['z'] + layer) / self.n_unit_cells for layer in range(self.n_unit_cells) for value in layers_dict.values()]
+            stacking_order_supercell = stacking_order * self.n_unit_cells
 
             new_cell = conventional_structure.cell.array.copy()
-            new_cell[-1] *= (self._n_unit_cells)
+            new_cell[-1] *= self.n_unit_cells
 
             if isinstance(fault_config.burger_vectors, dict):
                 for direction_name, path_points in fault_config.burger_vectors.items():
@@ -297,28 +305,28 @@ class FaultedStructure:
         return faulted_result
 
     def _build_faulted_structure_helper(
-        self, 
-        config: FaultConfig, 
-        ase_atoms_t, 
-        layers_dict, 
-        print_info=False
-    ):
+        self,
+        config: FaultConfig,
+        ase_atoms_t: Atoms,
+        layers_dict: dict[str, dict[str, ty.Any]],
+        print_info: bool = False,
+    ) -> ty.Optional[FaultedStructureResult]:
         """Internal helper for unstable/intrinsic fault building."""
         if not config.possible:
             return None
         
         if config.removal_layers is not None:
-             structure = build_atoms_from_stacking_removal(
-                ase_atoms_t, self._n_unit_cells, config.removal_layers, layers_dict,
+            structure = build_atoms_from_stacking_removal(
+                ase_atoms_t, self.n_unit_cells, config.removal_layers, layers_dict,
                 additional_spacing=(config.interface, 0.0), print_info=print_info
             )
-             return structure
+            return structure
         
         if config.burger_vectors is not None and isinstance(config.burger_vectors, list):
             structures_list = []
             for bv in config.burger_vectors:
                 structure = build_atoms_from_burger_vector(
-                    ase_atoms_t, self._n_unit_cells, bv, layers_dict, print_info=print_info
+                    ase_atoms_t, self.n_unit_cells, bv, layers_dict, print_info=print_info
                 )
                 structures_list.append({
                     'structure': structure,
@@ -332,46 +340,94 @@ class FaultedStructureData(Data, FaultedStructure):
     AiiDA Data class embedding FaultedStructure logic.
     Serialized ASE atoms are stored in attributes.
     """
-    
-    def __init__(self, ase: ty.Optional[Atoms] = None, **kwargs):
+
+    ASE_ATOMS_KEY = 'ase_atoms_json'
+    N_UNIT_CELLS_KEY = 'n_unit_cells'
+    GLIDING_PLANE_KEY = 'gliding_plane'
+    STRUKTURBERICHT_KEY = 'strukturbericht'
+
+    def __init__(
+        self,
+        ase: ty.Optional[Atoms] = None,
+        n_unit_cells: ty.Optional[int] = None,
+        gliding_plane: ty.Optional[str] = None,
+        strukturbericht: ty.Optional[str] = None,
+        **kwargs: ty.Any,
+    ) -> None:
         """
         Initialize AiiDA Data node.
-        pass `ase` to set the content.
+        Pass `ase`, `n_unit_cells`, and optional metadata before storing.
         """
-        # Call Data.__init__
         super().__init__(**kwargs)
-        if ase is not None:
-            self.set_ase(ase)
-            
-    def set_ase(self, ase_atoms: Atoms):
+        if ase is None:
+            return
+
+        if n_unit_cells is None:
+            raise ValueError('`n_unit_cells` must be provided when initializing `FaultedStructureData` with `ase`.')
+
+        resolved_strukturbericht = strukturbericht or get_strukturbericht(ase)
+        if resolved_strukturbericht is None:
+            raise ValueError('Failed to detect `strukturbericht` from the provided ASE structure.')
+
+        resolved_gliding_system = get_gliding_system(resolved_strukturbericht)
+        if resolved_gliding_system is None:
+            raise ValueError(f'No gliding system found for Strukturbericht `{resolved_strukturbericht}`.')
+
+        resolved_gliding_plane = gliding_plane or resolved_gliding_system.default_plane
+
+        self.set_ase(ase)
+        self._set_attribute(self.N_UNIT_CELLS_KEY, int(n_unit_cells))
+        self._set_attribute(self.GLIDING_PLANE_KEY, resolved_gliding_plane)
+        self._set_attribute(self.STRUKTURBERICHT_KEY, resolved_strukturbericht)
+
+    def _set_attribute(self, key: str, value: ty.Any) -> None:
+        """Set an attribute before storing the node."""
+        if self.is_stored:
+            raise ModificationNotAllowed('`FaultedStructureData` attributes cannot be modified after storing.')
+        self.base.attributes.set(key, value)
+
+    def set_ase(self, ase_atoms: Atoms) -> None:
         """Set the ASE atoms content, serializing to JSON."""
-        # Clean current attributes if needed? (Data usually immutable once stored)
-        self.base.attributes.set('ase_atoms_json', encode(ase_atoms))
-        # Clear cached properties in parent FaultedStructure if any?
-        # FaultedStructure uses self._strukturbericht, etc.
-        # But this instance is re-initialized or new.
-        # If set_ase is called, we should invalidate caches.
-        self._strukturbericht = None
-        self._gliding_system = None
+        self._set_attribute(self.ASE_ATOMS_KEY, encode(ase_atoms))
         
     @property
     def unit_cell(self) -> Atoms:
         """Retrieve ASE atoms from attributes."""
-        # Override FaultedStructure.unit_cell
-        json_str = self.base.attributes.get('ase_atoms_json')
+        json_str = self.base.attributes.get(self.ASE_ATOMS_KEY, None)
         if json_str is None:
-             raise AttributeError("No ASE atoms set for this FaultedStructureData.")
+            raise AttributeError('No ASE atoms set for this FaultedStructureData.')
         return ase_decode(json_str)
 
+    def get_ase(self) -> Atoms:
+        """Return the stored structure as ASE atoms."""
+        return self.unit_cell
+
     @property
-    def structure_data(self):
-         # FaultedStructure uses _structure_data in __init__? 
-         # Wait, new FaultedStructure uses _ase_atoms in __init__.
-         # But FaultedStructure.__init__ sets self._ase_atoms = ase_atoms.
-         # FaultedStructureData does NOT call FaultedStructure.__init__.
-         # It calls Data.__init__ (super().__init__).
-         # So self._ase_atoms is not set.
-         # But we override unit_cell property, which FaultedStructure uses.
-         # So FaultedStructure methods calling self.unit_cell will call our property.
-         # This works correctly via polymorphism.
-         pass
+    def n_unit_cells(self) -> int:
+        """Return the stored number of repeated unit cells."""
+        return int(self.base.attributes.get(self.N_UNIT_CELLS_KEY))
+
+    @property
+    def gliding_plane(self) -> str:
+        """Return the stored gliding plane."""
+        return self.base.attributes.get(self.GLIDING_PLANE_KEY)
+
+    @property
+    def strukturbericht(self) -> str:
+        """Return the stored Strukturbericht designation."""
+        return self.base.attributes.get(self.STRUKTURBERICHT_KEY)
+
+    @property
+    def gliding_system(self) -> GlidingSystem:
+        """Resolve the gliding system from the stored Strukturbericht."""
+        gliding_system = get_gliding_system(self.strukturbericht)
+        if gliding_system is None:
+            raise ValueError(f'No gliding system found for Strukturbericht `{self.strukturbericht}`.')
+        return gliding_system
+
+    @property
+    def structure_data(self) -> 'orm.StructureData':
+        """Return the stored unit cell as AiiDA `StructureData`."""
+        from aiida import orm
+
+        return orm.StructureData(ase=self.unit_cell)

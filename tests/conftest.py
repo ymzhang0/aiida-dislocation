@@ -10,13 +10,11 @@ from pathlib import Path
 
 import pytest
 
-# Try to load AiiDA test fixtures, but don't fail if pgtest is not available
 try:
-    import pgtest  # noqa: F401
-    pytest_plugins = ['aiida.manage.tests.pytest_fixtures']
+    import aiida.tools.pytest_fixtures  # noqa: F401
+    pytest_plugins = ['aiida.tools.pytest_fixtures']
 except ImportError:
-    # If pgtest is not available, we'll skip tests that require a database
-    # For simple builder tests, we don't need the full AiiDA test environment
+    # If AiiDA fixtures are unavailable, only pure-Python tests can run.
     pass
 
 

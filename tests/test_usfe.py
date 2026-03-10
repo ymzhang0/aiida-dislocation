@@ -29,7 +29,7 @@ def generate_inputs_usfe(generate_structure):
             'kpoints_distance': Float(0.3),
             'n_repeats': Int(4),
             'gliding_plane': Str('111'),
-            'additional_spacings': List(list=[0.0, 0.002]),
+            'layer_spacings': List(list=[0.0, 0.002]),
             'fault_method': Str('removal'),
             'vacuum_ratio': Float(0.1),
             'clean_workdir': Bool(False),
@@ -70,11 +70,11 @@ def generate_workchain_usfe(generate_workchain, generate_inputs_usfe, generate_c
         
         # Mock the context that would be set up by the workflow
         process.ctx.iteration = 1
-        additional_spacings = inputs.get('additional_spacings')
-        if additional_spacings is not None:
-            process.ctx.additional_spacings = additional_spacings.get_list() if hasattr(additional_spacings, 'get_list') else additional_spacings
+        layer_spacings = inputs.get('layer_spacings')
+        if layer_spacings is not None:
+            process.ctx.layer_spacings = layer_spacings.get_list() if hasattr(layer_spacings, 'get_list') else layer_spacings
         else:
-            process.ctx.additional_spacings = [0.0]
+            process.ctx.layer_spacings = [0.0]
         
         # Create mock nodes for sub-workchains
         if relax_outputs is not None:
@@ -123,7 +123,7 @@ def test_usfe_workchain_define():
     
     builder = USFEWorkChain.get_builder()
     assert hasattr(builder, 'structure')
-    assert hasattr(builder, 'additional_spacings')
+    assert hasattr(builder, 'layer_spacings')
     assert hasattr(builder, 'fault_method')
 
 
@@ -133,7 +133,7 @@ def test_usfe_workchain_default_inputs(generate_inputs_usfe):
     
     assert inputs['fault_method'].value == 'removal'
     assert inputs['vacuum_ratio'].value == 0.1
-    assert isinstance(inputs['additional_spacings'], List)
+    assert isinstance(inputs['layer_spacings'], List)
 
 
 def test_usfe_workchain_structure_input(generate_structure):
@@ -147,14 +147,14 @@ def test_usfe_workchain_structure_input(generate_structure):
     assert builder.structure == structure
 
 
-def test_usfe_workchain_additional_spacings():
-    """Test that the ``USFEWorkChain`` handles additional_spacings correctly."""
+def test_usfe_workchain_layer_spacings():
+    """Test that the ``USFEWorkChain`` handles ``layer_spacings`` correctly."""
     from aiida_dislocation.workflows.usfe import USFEWorkChain
     
     builder = USFEWorkChain.get_builder()
-    builder.additional_spacings = List(list=[0.0, 0.002, 0.004])
+    builder.layer_spacings = List(list=[0.0, 0.002, 0.004])
     
-    assert builder.additional_spacings.get_list() == [0.0, 0.002, 0.004]
+    assert builder.layer_spacings.get_list() == [0.0, 0.002, 0.004]
 
 
 def test_usfe_workchain_fault_method():
@@ -213,4 +213,3 @@ def test_usfe_workchain_setup():
     # Test that the setup method exists
     assert hasattr(USFEWorkChain, 'setup')
     assert callable(getattr(USFEWorkChain, 'setup'))
-

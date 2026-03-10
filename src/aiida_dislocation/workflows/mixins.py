@@ -1,24 +1,36 @@
 """Mixins and helper classes for workflow organization."""
 
+from __future__ import annotations
+
+import typing as ty
+
 from aiida import orm
+from aiida.engine import ExitCode
+from ase import Atoms
 from ase.formula import Formula
 from math import ceil
 
 
 class StructureGenerationMixin:
     """Mixin for structure generation related methods."""
+
+    @staticmethod
+    def _ensure_ase_structure(structure: orm.StructureData | Atoms) -> Atoms:
+        """Return an ASE structure from either ASE Atoms or `StructureData`."""
+        return structure.get_ase() if isinstance(structure, orm.StructureData) else structure
     
-    def _calculate_structure_multiplier(self, structure):
+    def _calculate_structure_multiplier(self, structure: orm.StructureData | Atoms) -> int:
         """Calculate the multiplier for a given structure.
         
         :param structure: ASE Atoms object
         :return: multiplier value
         """
-        formula = Formula(structure.get_chemical_formula())
+        ase_structure = self._ensure_ase_structure(structure)
+        formula = Formula(ase_structure.get_chemical_formula())
         _, multiplier = formula.reduce()
         return multiplier
     
-    def _store_structure_multiplier(self, structure, multiplier_name):
+    def _store_structure_multiplier(self, structure: orm.StructureData | Atoms, multiplier_name: str) -> int:
         """Store structure and its multiplier in context.
         
         :param structure: ASE Atoms object
@@ -28,7 +40,11 @@ class StructureGenerationMixin:
         setattr(self.ctx, multiplier_name, multiplier)
         return multiplier
     
-    def _validate_faulted_structure(self, faulted_structure_data, fault_type):
+    def _validate_faulted_structure(
+        self,
+        faulted_structure_data: ty.Optional[dict[str, ty.Any]],
+        fault_type: str,
+    ) -> tuple[bool, ty.Optional[ExitCode]]:
         """Validate that a faulted structure was generated.
         
         :param faulted_structure_data: Result from get_faulted_structure
@@ -56,13 +72,19 @@ class StructureGenerationMixin:
 
 class EnergyCalculationMixin:
     """Mixin for energy calculation related methods."""
+
+    def _get_physical_constant(self, name: str) -> float:
+        """Return a required physical constant from the workchain."""
+        if not hasattr(self, name):
+            raise AttributeError(f'`{type(self).__name__}` must define `{name}` to use energy mixin helpers.')
+        return getattr(self, name)
     
     def _calculate_stacking_fault_energy(
         self,
-        total_energy_faulted,
-        fault_multiplier,
-        fault_type_name
-    ):
+        total_energy_faulted: float,
+        fault_multiplier: int,
+        fault_type_name: str
+    ) -> ty.Optional[float]:
         """Calculate stacking fault energy from faulted and conventional geometries.
         
         :param total_energy_faulted: Total energy of faulted geometry
@@ -79,7 +101,7 @@ class EnergyCalculationMixin:
             / self.ctx.conventional_multiplier 
             * fault_multiplier
         )
-        stacking_fault_energy = energy_difference / self.ctx.surface_area * self._eVA22Jm2
+        stacking_fault_energy = energy_difference / self.ctx.surface_area * self._get_physical_constant('_eVA22Jm2')
         
         self.report(
             f'{fault_type_name} stacking fault energy evaluated from conventional geometry: '
@@ -87,8 +109,27 @@ class EnergyCalculationMixin:
         )
         
         return stacking_fault_energy
+
+    def _calculate_surface_energy(self, total_energy_slab: float, surface_multiplier: int) -> ty.Optional[float]:
+        """Calculate a two-surface slab energy in J/m^2."""
+        if 'total_energy_conventional_geometry' not in self.ctx:
+            return None
+
+        energy_difference = (
+            total_energy_slab
+            - self.ctx.total_energy_conventional_geometry
+            / self.ctx.conventional_multiplier
+            * surface_multiplier
+        )
+        return energy_difference / (2 * self.ctx.surface_area) * self._get_physical_constant('_eVA22Jm2')
     
-    def _report_energy(self, energy, multiplier, structure_type, unit_cells_description):
+    def _report_energy(
+        self,
+        energy: float,
+        multiplier: int,
+        structure_type: str,
+        unit_cells_description: str,
+    ) -> None:
         """Report energy in a consistent format.
         
         :param energy: Energy value
@@ -98,14 +139,18 @@ class EnergyCalculationMixin:
         """
         self.report(
             f'Total energy of {structure_type} [{multiplier} {unit_cells_description}]: '
-            f'{energy / self._RY2eV} Ry'
+            f'{energy / self._get_physical_constant("_RY2eV")} Ry'
         )
 
 
 class KpointsSetupMixin:
     """Mixin for kpoints setup related methods."""
     
-    def _calculate_kpoints_for_structure(self, structure, kpoints_scf):
+    def _calculate_kpoints_for_structure(
+        self,
+        structure: orm.StructureData | Atoms,
+        kpoints_scf: orm.KpointsData,
+    ) -> orm.KpointsData:
         """Calculate kpoints mesh for a given structure based on z-ratio.
         
         :param structure: ASE Atoms object
@@ -113,12 +158,14 @@ class KpointsSetupMixin:
         :return: KpointsData object
         """
         kpoints_scf_mesh = kpoints_scf.get_kpoints_mesh()[0]
-        z_ratio = structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
+        structure_ase = StructureGenerationMixin._ensure_ase_structure(structure)
+        conventional_ase = StructureGenerationMixin._ensure_ase_structure(self.ctx.conventional_structure)
+        z_ratio = structure_ase.cell.cellpar()[2] / conventional_ase.cell.cellpar()[2]
         kpoints = orm.KpointsData()
         kpoints.set_kpoints_mesh(kpoints_scf_mesh[:2] + [ceil(kpoints_scf_mesh[2] / z_ratio)])
         return kpoints
     
-    def _setup_surface_energy_kpoints(self, kpoints_scf):
+    def _setup_surface_energy_kpoints(self, kpoints_scf: orm.KpointsData) -> orm.KpointsData:
         """Setup kpoints for surface energy calculation.
         
         :param kpoints_scf_mesh: Base kpoints mesh from SCF calculation
@@ -135,13 +182,13 @@ class WorkflowInspectionMixin:
     
     def _inspect_workchain(
         self,
-        workchain,
-        workchain_type_name,
-        structure_type,
-        exit_code_on_failure,
-        namespace=None,
-        workchain_class=None
-    ):
+        workchain: orm.ProcessNode,
+        workchain_type_name: str,
+        structure_type: str,
+        exit_code_on_failure: ExitCode,
+        namespace: ty.Optional[str] = None,
+        workchain_class: ty.Optional[type] = None
+    ) -> ty.Optional[ExitCode]:
         """Generic method to inspect a workchain and handle outputs.
         
         :param workchain: The workchain node to inspect
@@ -170,11 +217,10 @@ class WorkflowInspectionMixin:
         
         return None
     
-    def _get_workchain_energy(self, workchain):
+    def _get_workchain_energy(self, workchain: orm.ProcessNode) -> float:
         """Extract energy from workchain outputs.
         
         :param workchain: Workchain node
         :return: Energy value
         """
-        return workchain.outputs.output_parameters.get('energy')
-
+        return float(workchain.outputs.output_parameters.get('energy'))

@@ -1,16 +1,21 @@
+from __future__ import annotations
+
+import typing as ty
+
 from aiida import orm
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext, if_, while_, append_
-from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
+from aiida.engine import ExitCode, WorkChain, append_, if_, while_
+from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+    create_kpoints_from_distance,
+)
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
-from math import ceil
 
-from aiida_dislocation.data.faulted_structure import FaultedStructure
-from ase.formula import Formula
+from aiida_dislocation.calculations import generate_faulted_structures
+from aiida_dislocation.data.faulted_structure import FaultedStructureData
 
 from .mixins import (
     StructureGenerationMixin,
@@ -39,7 +44,7 @@ class GSFEWorkChain(
     _eVA22Jm2 = 1.602176634E-19 * 1E+20
     
     @classmethod
-    def define(cls, spec):
+    def define(cls, spec) -> None:
         super().define(spec)
 
         spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
@@ -163,6 +168,18 @@ class GSFEWorkChain(
             required=False,
             help='Aggregated GSFE results for all evaluated faulted structures.',
         )
+        spec.output(
+            'faulted_structure_data',
+            valid_type=FaultedStructureData,
+            required=False,
+            help='The provenance-tracked faulted structure input data used for GSFE generation.',
+        )
+        spec.output(
+            'structure_map',
+            valid_type=orm.Dict,
+            required=False,
+            help='Mapping between generated structure labels and their displacement metadata.',
+        )
         
         spec.exit_code(
             401,
@@ -199,7 +216,7 @@ class GSFEWorkChain(
         return files(protocols) / f'{cls._NAMESPACE}.yaml'
 
     @classmethod
-    def get_protocol_overrides(cls) -> dict:
+    def get_protocol_overrides(cls) -> dict[str, ty.Any]:
         """Get the ``overrides`` of the default protocol."""
         from importlib_resources import files
         import yaml
@@ -266,10 +283,10 @@ class GSFEWorkChain(
         return builder
 
 
-    def should_run_relax(self):
+    def should_run_relax(self) -> bool:
         return self._RELAX_NAMESPACE in self.inputs
 
-    def run_relax(self):
+    def run_relax(self) -> dict[str, orm.ProcessNode]:
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwRelaxWorkChain,
@@ -283,7 +300,7 @@ class GSFEWorkChain(
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for primitive structure')
         return {f"workchain_relax": running}
 
-    def inspect_relax(self):
+    def inspect_relax(self) -> ty.Optional[ExitCode]:
         workchain = self.ctx.workchain_relax
         if not workchain.is_finished_ok:
             self.report(f'PwRelaxWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
@@ -302,70 +319,66 @@ class GSFEWorkChain(
             )
         )
 
-    def generate_structures(self):
-        """Generate base structures (conventional and cleavaged). 
-        Subclasses should override generate_faulted_structure() to generate faulted structures."""
+    def generate_structures(self) -> ty.Optional[ExitCode]:
+        """Generate provenance-tracked structures for GSFE calculations."""
         
         if 'current_structure' not in self.ctx:
             self.ctx.current_structure = self.inputs.structure
         
         gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
-        faulted_structure = FaultedStructure(
-            self.ctx.current_structure.get_ase(),
-            gliding_plane=gliding_plane,
-            n_unit_cells=self.inputs.n_repeats.value,
-        )
-        
+
         try:
-            faulted_structure_data = faulted_structure.get_faulted_structure(
-                fault_mode = 'general',
-                fault_type = 'general',
-                additional_spacing=0.0,
+            faulted_structure_data = FaultedStructureData(
+                ase=self.ctx.current_structure.get_ase(),
+                n_unit_cells=self.inputs.n_repeats.value,
+                gliding_plane=gliding_plane,
+            )
+            faulted_structure_data.store()
+            generated_structures = generate_faulted_structures(
+                faulted_structure_data=faulted_structure_data,
+                fault_mode=orm.Str('general'),
+                fault_type=orm.Str('general'),
             )
         except ValueError as exception:
             self.report(f'Failed to generate GSFE structures: {exception}')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        if not faulted_structure_data:
+        structure_map_node = generated_structures['structure_map']
+        structure_map = structure_map_node.get_dict()
+        structure_keys = sorted(structure_map.keys())
+
+        if not structure_keys:
             self.report('No generalized fault path is available for the selected structure and gliding plane.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.faulted_structure = faulted_structure_data
-
-        # Get cleavaged structure (based on conventional cell)
-        cleavaged_structure = faulted_structure.get_cleavaged_structure()
-
-        # Store structures directly in context
-        self.ctx.conventional_structure = faulted_structure.get_conventional_structure()
-        self.ctx.cleavaged_structure = cleavaged_structure
-
-        self.ctx.surface_area = faulted_structure.surface_area
+        self.ctx.faulted_structure_data = faulted_structure_data
+        self.ctx.generated_structures = {
+            key: value for key, value in generated_structures.items() if key.startswith('sfe_idx_')
+        }
+        self.ctx.structure_map_node = structure_map_node
+        self.ctx.structure_map = structure_map
+        self.ctx.structure_keys = structure_keys
+        self.ctx.number_of_structures = len(structure_keys)
+        self.ctx.conventional_structure = generated_structures['conventional_structure']
+        self.ctx.cleavaged_structure = generated_structures['cleavaged_structure']
+        self.ctx.surface_area = generated_structures['surface_area'].value
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
-        
-        unit_cell_formula = Formula(self.ctx.current_structure.get_ase().get_chemical_formula())
-        _, unit_cell_multiplier = unit_cell_formula.reduce()
-        
-        # Calculate and store multipliers using helper method
-        self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(
-            self.ctx.current_structure.get_ase()
-        )
-        self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
-            self.ctx.conventional_structure
-        )
-        self.ctx.surface_multiplier = self._calculate_structure_multiplier(
-            cleavaged_structure
-        )
 
-    def _get_kpoints_scf(self):
+        self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
+        self.ctx.conventional_multiplier = self._calculate_structure_multiplier(self.ctx.conventional_structure)
+        self.ctx.surface_multiplier = self._calculate_structure_multiplier(self.ctx.cleavaged_structure)
+
+        self.out('faulted_structure_data', faulted_structure_data)
+        self.out('structure_map', structure_map_node)
+
+    def _get_kpoints_scf(self) -> orm.KpointsData:
         """Get or create kpoints_scf. Returns kpoints_scf KpointsData object."""
         if 'kpoints_scf' in self.ctx:
             kpoints_scf = self.ctx.kpoints_scf
         else:
             inputs = {
-                'structure': orm.StructureData(
-                    ase=self.ctx.conventional_structure
-                    ),
+                'structure': self.ctx.conventional_structure,
                 'distance': self.inputs.kpoints_distance,
                 'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
                 'metadata': {
@@ -376,9 +389,8 @@ class GSFEWorkChain(
         
         return kpoints_scf
 
-    def setup(self):
-        self.ctx.iteration = 1
-        self.ctx.number_of_structures = len(self.ctx.faulted_structure)
+    def setup(self) -> None:
+        self.ctx.iteration = 0
         self.ctx.sfe_results = []
         # Get kpoints_scf
         kpoints_scf = self._get_kpoints_scf()
@@ -388,10 +400,10 @@ class GSFEWorkChain(
         # Calculate kpoints for surface energy using helper method
         self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf)
 
-    def should_run_scf(self):
+    def should_run_scf(self) -> bool:
         return self._SCF_NAMESPACE in self.inputs
 
-    def run_scf(self):
+    def run_scf(self) -> dict[str, orm.ProcessNode]:
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
@@ -401,10 +413,7 @@ class GSFEWorkChain(
 
         inputs.metadata.call_link_label = self._SCF_NAMESPACE
 
-        inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.conventional_structure
-            )        
-        
+        inputs.pw.structure = self.ctx.conventional_structure
         inputs.kpoints = self.ctx.kpoints_scf
 
         running = self.submit(PwBaseWorkChain, **inputs)
@@ -412,7 +421,7 @@ class GSFEWorkChain(
 
         return {f"workchain_scf": running}
 
-    def inspect_scf(self):
+    def inspect_scf(self) -> ty.Optional[ExitCode]:
         workchain = self.ctx.workchain_scf
         if not workchain.is_finished_ok:
             self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
@@ -430,52 +439,53 @@ class GSFEWorkChain(
         )
         self.ctx.total_energy_conventional_geometry = self._get_workchain_energy(workchain)
 
-    def should_run_sfe(self):
+    def should_run_sfe(self) -> bool:
 
         if self._SFE_NAMESPACE not in self.inputs:
             return False
 
-        if self.ctx.faulted_structure == []:
+        if self.ctx.iteration >= self.ctx.number_of_structures:
             return False
-        
-        faulted_structure = self.ctx.faulted_structure.pop(0)
-        self.ctx.current_structure = faulted_structure['structure']
-        self.ctx.current_slipping_vector = faulted_structure['burger_vector']
-        self.ctx.current_direction_name = faulted_structure.get('direction_name')
-        self.ctx.current_path_index = faulted_structure.get('path_index')
-        self.ctx.current_step_index = faulted_structure.get('step_index')
-        self.ctx.current_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
 
-        z_ratio = self.ctx.current_structure.cell.cellpar()[2] / self.ctx.conventional_structure.cell.cellpar()[2]
-        kpoints_mesh = self.ctx.kpoints_scf.get_kpoints_mesh()[0]
-        
-        kpoints_sfe = orm.KpointsData()
-        kpoints_sfe.set_kpoints_mesh(kpoints_mesh[:2] + [ceil(kpoints_mesh[2] / z_ratio)])
-        
-        self.ctx.kpoints_sfe = kpoints_sfe
+        self.ctx.current_structure_key = self.ctx.structure_keys[self.ctx.iteration]
+        self.ctx.current_structure = self.ctx.generated_structures[self.ctx.current_structure_key]
+        current_metadata = self.ctx.structure_map[self.ctx.current_structure_key]
+        self.ctx.current_slipping_vector = current_metadata['burger_vector']
+        self.ctx.current_direction_name = current_metadata['direction_name']
+        self.ctx.current_path_index = current_metadata['path_index']
+        self.ctx.current_step_index = current_metadata['step_index']
+        self.ctx.current_point_index = current_metadata['point_index']
+        self.ctx.current_structure_uuid = current_metadata['structure_uuid']
+        self.ctx.current_direction_label = f"{self.ctx.current_direction_name}_path_{self.ctx.current_path_index:03d}"
+        self.ctx.current_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
+        self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
+            self.ctx.current_structure,
+            self.ctx.kpoints_scf,
+        )
 
         return True
 
-    def run_sfe(self):
+    def run_sfe(self) -> dict[str, ty.Any]:
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
                 namespace=self._SFE_NAMESPACE
             )
         )
-        inputs.metadata.call_link_label = f"structure_{self.ctx.iteration:02d}"
+        inputs.metadata.call_link_label = self.ctx.current_structure_key
 
-        inputs.pw.structure = orm.StructureData(ase=self.ctx.current_structure)
+        inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_sfe
 
         running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for faulted structure {self.ctx.iteration}/{self.ctx.number_of_structures}...')
-
-        self.ctx.iteration += 1
+        self.report(
+            f'launching PwBaseWorkChain<{running.pk}> for faulted structure '
+            f'{self.ctx.iteration + 1}/{self.ctx.number_of_structures} ({self.ctx.current_structure_key}).'
+        )
 
         return {f"workchain_sfe": append_(running)}
 
-    def inspect_sfe(self):
+    def inspect_sfe(self) -> ty.Optional[ExitCode]:
         workchain = self.ctx.workchain_sfe[-1]
         if not workchain.is_finished_ok:
             self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
@@ -494,7 +504,11 @@ class GSFEWorkChain(
             )
 
         self.ctx.sfe_results.append({
-            'iteration': self.ctx.iteration - 1,
+            'structure_label': self.ctx.current_structure_key,
+            'structure_uuid': self.ctx.current_structure_uuid,
+            'iteration': self.ctx.iteration,
+            'point_index': self.ctx.current_point_index,
+            'direction_label': self.ctx.current_direction_label,
             'direction_name': self.ctx.current_direction_name,
             'path_index': self.ctx.current_path_index,
             'step_index': self.ctx.current_step_index,
@@ -504,11 +518,12 @@ class GSFEWorkChain(
             'workchain_pk': workchain.pk,
             'workchain_uuid': workchain.uuid,
         })
+        self.ctx.iteration += 1
 
-    def should_run_surface_energy(self):
+    def should_run_surface_energy(self) -> bool:
         return self._SURFACE_ENERGY_NAMESPACE in self.inputs
 
-    def run_surface_energy(self):
+    def run_surface_energy(self) -> dict[str, orm.ProcessNode]:
         inputs = AttributeDict(
             self.exposed_inputs(
                 PwBaseWorkChain,
@@ -516,15 +531,13 @@ class GSFEWorkChain(
             )
         )
         inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
-        inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.cleavaged_structure
-            )
+        inputs.pw.structure = self.ctx.cleavaged_structure
         inputs.kpoints = self.ctx.kpoints_surface_energy
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure')
         return {f"workchain_surface_energy": running}
 
-    def inspect_surface_energy(self):
+    def inspect_surface_energy(self) -> ty.Optional[ExitCode]:
         workchain = self.ctx.workchain_surface_energy
         if not workchain.is_finished_ok:
             self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
@@ -534,13 +547,10 @@ class GSFEWorkChain(
 
         total_energy_slab = workchain.outputs.output_parameters.get('energy')
         if 'total_energy_conventional_geometry' in self.ctx:
-            energy_difference = (
-                total_energy_slab
-                - self.ctx.total_energy_conventional_geometry
-                / self.ctx.conventional_multiplier
-                * self.ctx.surface_multiplier
+            self.ctx.surface_energy_j_m2 = self._calculate_surface_energy(
+                total_energy_slab,
+                self.ctx.surface_multiplier,
             )
-            self.ctx.surface_energy_j_m2 = energy_difference / self.ctx.surface_area * self._eVA22Jm2
 
         # Expose outputs
         self.out_many(
@@ -552,12 +562,33 @@ class GSFEWorkChain(
         )
 
 
-    def results(self):
+    def results(self) -> None:
         """Output collected results."""
+        nested_results: dict[str, dict[str, dict[str, ty.Any]]] = {}
+
+        for point_result in self.ctx.sfe_results:
+            direction_results = nested_results.setdefault(point_result['direction_label'], {})
+            point_index = f"{point_result['point_index']:03d}"
+            direction_results[point_index] = {
+                'structure_label': point_result['structure_label'],
+                'structure_uuid': point_result['structure_uuid'],
+                'iteration': point_result['iteration'],
+                'point_index': point_result['point_index'],
+                'direction_name': point_result['direction_name'],
+                'path_index': point_result['path_index'],
+                'step_index': point_result['step_index'],
+                'displacement_vector': point_result['burger_vector'],
+                'burger_vector': point_result['burger_vector'],
+                'total_energy_ev': point_result['total_energy_ev'],
+                'sfe_j_m2': point_result['gsfe_j_m2'],
+                'workchain_pk': point_result['workchain_pk'],
+                'workchain_uuid': point_result['workchain_uuid'],
+            }
+
         results = {
+            'results': nested_results,
             'surface_area_angstrom2': float(self.ctx.surface_area),
             'number_of_structures': self.ctx.number_of_structures,
-            'points': self.ctx.sfe_results,
         }
 
         if 'total_energy_conventional_geometry' in self.ctx:
