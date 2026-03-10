@@ -132,6 +132,23 @@ def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_stru
     assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
 
 
+def test_surface_builder_constructs_cleavaged_structure_data_from_kwargs(monkeypatch, aluminum_structure) -> None:
+    """Surface builder should construct the config node from explicit keyword arguments."""
+    _patch_sub_builders(monkeypatch)
+
+    builder = SurfaceEnergyWorkChain.get_builder_from_protocol(
+        object(),
+        aluminum_structure,
+        n_repeats=6,
+        gliding_plane='100',
+        vacuum_spacings=[0.6, 1.2],
+    )
+
+    assert builder.cleavaged_structure_data.n_unit_cells == 6
+    assert builder.cleavaged_structure_data.gliding_plane == '100'
+    assert builder.cleavaged_structure_data.vacuum_spacings == [0.6, 1.2]
+
+
 def test_layer_relax_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
     """Rigid layer relax builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
     monkeypatch.setattr(

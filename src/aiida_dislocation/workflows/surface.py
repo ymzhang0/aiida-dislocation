@@ -1,6 +1,7 @@
 from aiida import orm
 from aiida.common import AttributeDict
 from aiida.engine import WorkChain, if_, while_
+import typing as ty
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
@@ -218,6 +219,9 @@ class SurfaceEnergyWorkChain(
             structure,
             protocol='moderate',
             overrides=None,
+            n_repeats: ty.Optional[int | orm.Int] = None,
+            gliding_plane: ty.Optional[str | orm.Str] = None,
+            vacuum_spacings: ty.Optional[ty.Sequence[float] | orm.List] = None,
             **kwargs
         ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
@@ -259,12 +263,18 @@ class SurfaceEnergyWorkChain(
             if 'base' in builder[cls._RELAX_NAMESPACE]:
                 builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
                 builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
-        
+
         builder.structure = structure
+        resolved_n_repeats = n_repeats.value if isinstance(n_repeats, orm.Int) else n_repeats
+        resolved_gliding_plane = gliding_plane.value if isinstance(gliding_plane, orm.Str) else gliding_plane
+        if isinstance(vacuum_spacings, orm.List):
+            resolved_vacuum_spacings = vacuum_spacings.get_list()
+        else:
+            resolved_vacuum_spacings = list(vacuum_spacings) if vacuum_spacings is not None else None
         builder.cleavaged_structure_data = CleavagedStructureData(
-            n_unit_cells=inputs.get('n_repeats', 4),
-            gliding_plane=inputs.get('gliding_plane', ''),
-            vacuum_spacings=inputs.get('vacuum_spacings', [1.0]),
+            n_unit_cells=inputs.get('n_repeats', 4) if resolved_n_repeats is None else resolved_n_repeats,
+            gliding_plane=inputs.get('gliding_plane', '') if resolved_gliding_plane is None else resolved_gliding_plane,
+            vacuum_spacings=inputs.get('vacuum_spacings', [1.0]) if resolved_vacuum_spacings is None else resolved_vacuum_spacings,
         )
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
