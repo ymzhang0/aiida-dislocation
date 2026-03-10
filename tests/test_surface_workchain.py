@@ -82,10 +82,10 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     process.out = _capture_output  # type: ignore[method-assign]
     process.results()
 
-    assert 'surface_results' in captured_outputs
-    assert captured_outputs['surface_results'].is_stored
+    assert 'results' in captured_outputs
+    assert captured_outputs['results'].is_stored
 
-    results = captured_outputs['surface_results'].get_dict()
+    results = captured_outputs['results'].get_dict()
 
     assert results['surface_area_angstrom2'] == 7.5
     assert results['number_of_spacings'] == 2
@@ -98,11 +98,11 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     assert results['results']['1.000000']['workchain_uuid'] == 'uuid-102'
 
 
-def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
+def test_surface_workchain_generate_structures_keeps_internal_structure_map_only(
     aiida_profile_clean,
     aluminum_structure,
 ) -> None:
-    """Surface workflow should build and expose ``CleavagedStructureData``."""
+    """Surface workflow should keep structure-generation metadata internal to the workchain."""
     builder = SurfaceEnergyWorkChain.get_builder()
     builder.structure = aluminum_structure
     builder.cleavaged_structure_data = CleavagedStructureData(
@@ -126,10 +126,9 @@ def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
     result = process.generate_structures()
 
     assert result is None
-    assert isinstance(process.ctx.cleavaged_structure_data, CleavagedStructureData)
-    assert 'cleavaged_structure_data' in captured_outputs
-    assert 'structure_map' in captured_outputs
-    assert captured_outputs['cleavaged_structure_data'].uuid == process.ctx.cleavaged_structure_data.uuid
+    assert process.ctx.structure_map['slab_idx_001']['vacuum_spacing'] == pytest.approx(0.5)
+    assert process.ctx.structure_map['slab_idx_002']['vacuum_spacing'] == pytest.approx(1.0)
+    assert captured_outputs == {}
 
 
 def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(

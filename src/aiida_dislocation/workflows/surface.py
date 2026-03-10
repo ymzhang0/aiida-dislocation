@@ -142,22 +142,10 @@ class SurfaceEnergyWorkChain(
             }
         )
         spec.output(
-            'surface_results',
+            'results',
             valid_type=orm.Dict,
             required=False,
             help='Aggregated surface-energy results for all evaluated vacuum spacings.',
-        )
-        spec.output(
-            'cleavaged_structure_data',
-            valid_type=CleavagedStructureData,
-            required=False,
-            help='The cleavaged-structure configuration used by the surface workflow.',
-        )
-        spec.output(
-            'structure_map',
-            valid_type=orm.Dict,
-            required=False,
-            help='Mapping between generated slab labels and their vacuum-spacing metadata.',
         )
         
         spec.exit_code(
@@ -340,7 +328,6 @@ class SurfaceEnergyWorkChain(
             self.report('No slab structures were generated for the selected configuration.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.cleavaged_structure_data = self.inputs.cleavaged_structure_data
         self.ctx.generated_structures = {
             key: value for key, value in generated_structures.items() if key.startswith('slab_idx_')
         }
@@ -359,8 +346,6 @@ class SurfaceEnergyWorkChain(
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
             self.ctx.conventional_structure
         )
-        self.out('cleavaged_structure_data', self.inputs.cleavaged_structure_data)
-        self.out('structure_map', structure_map_node)
 
     def _get_kpoints_scf(self):
         """Get or create kpoints_scf. Returns kpoints_scf KpointsData object."""
@@ -523,4 +508,4 @@ class SurfaceEnergyWorkChain(
         if 'total_energy_conventional_geometry' in self.ctx:
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
 
-        self.out('surface_results', orm.Dict(dict=results).store())
+        self.out('results', orm.Dict(dict=results).store())
