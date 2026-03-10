@@ -219,6 +219,7 @@ class GSFEWorkChain(
 
             if workchain_type == PwRelaxWorkChain:
                 overrides.setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base_final_scf', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
                 overrides['pseudo_family'] = inputs.get('pseudo_family', None)
 

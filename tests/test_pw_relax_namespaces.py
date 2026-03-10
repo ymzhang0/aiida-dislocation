@@ -66,22 +66,66 @@ def test_usfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structu
 
 def test_gsfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
     """GSFE builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
-    _patch_sub_builders(monkeypatch)
+    captured_overrides = {}
+    pseudo_family = 'test-pseudo-family'
 
-    builder = GSFEWorkChain.get_builder_from_protocol(object(), aluminum_structure)
+    def _capture_pw_relax_builder(cls, *args, **kwargs):
+        captured_overrides.update(kwargs.get('overrides', {}))
+        return PwRelaxWorkChain.get_builder()
+
+    monkeypatch.setattr(
+        PwRelaxWorkChain,
+        'get_builder_from_protocol',
+        classmethod(_capture_pw_relax_builder),
+    )
+    monkeypatch.setattr(
+        PwBaseWorkChain,
+        'get_builder_from_protocol',
+        classmethod(_mock_pw_base_builder_from_protocol),
+    )
+
+    builder = GSFEWorkChain.get_builder_from_protocol(
+        object(),
+        aluminum_structure,
+        overrides={'pseudo_family': pseudo_family},
+    )
 
     assert 'base' in builder.relax
     assert 'base_final_scf' not in builder.relax
+    assert captured_overrides['base']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
 
 
 def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
     """Surface builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
-    _patch_sub_builders(monkeypatch)
+    captured_overrides = {}
+    pseudo_family = 'test-pseudo-family'
 
-    builder = SurfaceEnergyWorkChain.get_builder_from_protocol(object(), aluminum_structure)
+    def _capture_pw_relax_builder(cls, *args, **kwargs):
+        captured_overrides.update(kwargs.get('overrides', {}))
+        return PwRelaxWorkChain.get_builder()
+
+    monkeypatch.setattr(
+        PwRelaxWorkChain,
+        'get_builder_from_protocol',
+        classmethod(_capture_pw_relax_builder),
+    )
+    monkeypatch.setattr(
+        PwBaseWorkChain,
+        'get_builder_from_protocol',
+        classmethod(_mock_pw_base_builder_from_protocol),
+    )
+
+    builder = SurfaceEnergyWorkChain.get_builder_from_protocol(
+        object(),
+        aluminum_structure,
+        overrides={'pseudo_family': pseudo_family},
+    )
 
     assert 'base' in builder.relax
     assert 'base_final_scf' not in builder.relax
+    assert captured_overrides['base']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
 
 
 def test_layer_relax_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
