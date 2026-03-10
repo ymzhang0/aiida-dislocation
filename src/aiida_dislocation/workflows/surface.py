@@ -240,8 +240,8 @@ class SurfaceEnergyWorkChain(
             overrides = inputs.get(namespace, {})
 
             if workchain_type == PwRelaxWorkChain:
-                overrides.setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
-                overrides.setdefault('base_final_scf', {})['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base_relax', {})['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base_init_relax', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
                 overrides['pseudo_family'] = inputs.get('pseudo_family', None)
 
@@ -259,10 +259,10 @@ class SurfaceEnergyWorkChain(
             builder[namespace]._data = sub_builder._data
 
         if cls._RELAX_NAMESPACE in builder:
-            builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
-            if 'base' in builder[cls._RELAX_NAMESPACE]:
-                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
-                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
+            builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
+            if 'base_relax' in builder[cls._RELAX_NAMESPACE]:
+                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
+                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
 
         builder.structure = structure
         resolved_n_repeats = n_repeats.value if isinstance(n_repeats, orm.Int) else n_repeats
@@ -294,7 +294,7 @@ class SurfaceEnergyWorkChain(
         )
         inputs.metadata.call_link_label = self._RELAX_NAMESPACE
         inputs.structure = self.inputs.structure
-        inputs.base.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for primitive structure')
         return {f"workchain_relax": running}

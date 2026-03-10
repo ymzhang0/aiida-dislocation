@@ -2,7 +2,7 @@ default_inputs:
   clean_workdir: True
   kpoints_distance: 0.3
   relax:
-    base:
+    base_relax:
       pw:
         metadata:
             options:

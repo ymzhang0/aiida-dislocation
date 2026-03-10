@@ -55,17 +55,17 @@ def _patch_sub_builders(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_usfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
-    """Top-level SFE builders should target ``base`` and drop ``base_final_scf``."""
+    """Top-level SFE builders should target ``base_relax`` and drop ``base_init_relax``."""
     _patch_sub_builders(monkeypatch)
 
     builder = USFEWorkChain.get_builder_from_protocol(object(), aluminum_structure)
 
-    assert 'base' in builder.relax
-    assert 'base_final_scf' not in builder.relax
+    assert 'base_relax' in builder.relax
+    assert 'base_init_relax' not in builder.relax
 
 
 def test_gsfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
-    """GSFE builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
+    """GSFE builder should consume the ``base_relax``/``base_init_relax`` layout."""
     captured_overrides = {}
     pseudo_family = 'test-pseudo-family'
 
@@ -90,13 +90,13 @@ def test_gsfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structu
         overrides={'pseudo_family': pseudo_family},
     )
 
-    assert 'base' in builder.relax
-    assert 'base_final_scf' not in builder.relax
+    assert 'base_relax' in builder.relax
+    assert 'base_init_relax' not in builder.relax
     assert hasattr(builder, 'faulted_structure_data')
     assert not hasattr(builder, 'n_repeats')
     assert not hasattr(builder, 'gliding_plane')
-    assert captured_overrides['base']['pseudo_family'] == pseudo_family
-    assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_relax']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_init_relax']['pseudo_family'] == pseudo_family
 
 
 def test_gsfe_builder_constructs_faulted_structure_data_from_kwargs(monkeypatch, aluminum_structure) -> None:
@@ -115,7 +115,7 @@ def test_gsfe_builder_constructs_faulted_structure_data_from_kwargs(monkeypatch,
 
 
 def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
-    """Surface builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
+    """Surface builder should consume the ``base_relax``/``base_init_relax`` layout."""
     captured_overrides = {}
     pseudo_family = 'test-pseudo-family'
 
@@ -140,14 +140,14 @@ def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_stru
         overrides={'pseudo_family': pseudo_family},
     )
 
-    assert 'base' in builder.relax
-    assert 'base_final_scf' not in builder.relax
+    assert 'base_relax' in builder.relax
+    assert 'base_init_relax' not in builder.relax
     assert hasattr(builder, 'cleavaged_structure_data')
     assert not hasattr(builder, 'n_repeats')
     assert not hasattr(builder, 'gliding_plane')
     assert not hasattr(builder, 'vacuum_spacings')
-    assert captured_overrides['base']['pseudo_family'] == pseudo_family
-    assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_relax']['pseudo_family'] == pseudo_family
+    assert captured_overrides['base_init_relax']['pseudo_family'] == pseudo_family
 
 
 def test_surface_builder_constructs_cleavaged_structure_data_from_kwargs(monkeypatch, aluminum_structure) -> None:
@@ -168,7 +168,7 @@ def test_surface_builder_constructs_cleavaged_structure_data_from_kwargs(monkeyp
 
 
 def test_layer_relax_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:
-    """Rigid layer relax builder should consume the new ``PwRelaxWorkChain`` namespace layout."""
+    """Rigid layer relax builder should consume the ``base_relax``/``base_init_relax`` layout."""
     monkeypatch.setattr(
         PwRelaxWorkChain,
         'get_builder_from_protocol',
@@ -177,5 +177,5 @@ def test_layer_relax_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_
 
     builder = RigidLayerRelaxWorkChain.get_builder_from_protocol(object(), aluminum_structure)
 
-    assert 'base' in builder.relax
-    assert 'base_final_scf' not in builder.relax
+    assert 'base_relax' in builder.relax
+    assert 'base_init_relax' not in builder.relax

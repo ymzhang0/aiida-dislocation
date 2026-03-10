@@ -11,7 +11,7 @@ default_inputs:
     - 0.008
   
   relax:
-    base:
+    base_relax:
       pw:
         metadata:
             options:
@@ -25,7 +25,7 @@ default_inputs:
 
   layer_relax:
     relax:
-      base:
+      base_relax:
         pw:
           settings:
             USE_FRACTIONAL: True
