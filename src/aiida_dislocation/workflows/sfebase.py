@@ -245,11 +245,9 @@ class SFEBaseWorkChain(
             overrides = inputs.get(namespace, {})
             
             if workchain_type == RigidLayerRelaxWorkChain:
-                overrides['relax']['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
-                overrides['relax']['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('relax', {}).setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             elif workchain_type == PwRelaxWorkChain:
-                overrides['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
-                overrides['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
                 overrides['pseudo_family'] = inputs.get('pseudo_family', None)
             sub_builder = workchain_type.get_builder_from_protocol(
@@ -260,7 +258,7 @@ class SFEBaseWorkChain(
 
             builder[namespace]._data = sub_builder._data
         
-        builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
+        builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
 
         builder.layer_spacings = orm.List(list=inputs.get('layer_spacings', [0.0]))
         builder.structure = structure
@@ -288,7 +286,7 @@ class SFEBaseWorkChain(
         inputs.metadata.call_link_label = self._RELAX_NAMESPACE
 
         inputs.structure = self.inputs.structure
-        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base.kpoints_distance = self.inputs.kpoints_distance
 
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for {self.inputs.structure.get_formula()} unit cell geometry.')

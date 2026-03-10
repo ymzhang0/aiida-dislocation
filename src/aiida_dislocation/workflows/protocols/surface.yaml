@@ -9,7 +9,7 @@ default_inputs:
    - 1.7
    - 2.0
   relax:
-    base_relax:
+    base:
       pw:
         metadata:
             options:

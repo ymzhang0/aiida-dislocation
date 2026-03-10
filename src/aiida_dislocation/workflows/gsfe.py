@@ -38,7 +38,6 @@ class GSFEWorkChain(
     _RELAX_NAMESPACE = "relax"
     _SCF_NAMESPACE = "scf"
     _SFE_NAMESPACE = "sfe"
-    _SURFACE_ENERGY_NAMESPACE = "surface_energy"
 
     _RY2eV = 13.605693122990
     _eVA22Jm2 = 1.602176634E-19 * 1E+20
@@ -104,22 +103,6 @@ class GSFEWorkChain(
             }
         )
 
-        spec.expose_inputs(
-            PwBaseWorkChain,
-            namespace=cls._SURFACE_ENERGY_NAMESPACE,
-            exclude=(
-                'pw.structure',
-                'clean_workdir',
-                'kpoints',
-                'kpoints_distance',
-            ),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for the `PwBaseWorkChain` for surface energy calculation.'
-            }
-        )
-
         spec.outline(
             if_(cls.should_run_relax)(
                 cls.run_relax,
@@ -135,10 +118,6 @@ class GSFEWorkChain(
                 cls.run_sfe,
                 cls.inspect_sfe,
             ),
-            if_(cls.should_run_surface_energy)(
-                cls.run_surface_energy,
-                cls.inspect_surface_energy,
-            ),
             cls.results,
         )
         spec.expose_outputs(
@@ -151,13 +130,6 @@ class GSFEWorkChain(
         spec.expose_outputs(
             PwBaseWorkChain,
             namespace=cls._SCF_NAMESPACE,
-            namespace_options={
-                'required': False,
-            }
-        )
-        spec.expose_outputs(
-            PwBaseWorkChain,
-            namespace=cls._SURFACE_ENERGY_NAMESPACE,
             namespace_options={
                 'required': False,
             }
@@ -196,11 +168,6 @@ class GSFEWorkChain(
             403,
             "ERROR_SUB_PROCESS_FAILED_USF",
             message='The `PwBaseWorkChain` for the USF run failed.',
-        )
-        spec.exit_code(
-            404,
-            "ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY",
-            message='The `PwBaseWorkChain` for the surface energy run failed.',
         )
         spec.exit_code(
             405,
@@ -247,12 +214,11 @@ class GSFEWorkChain(
             (cls._RELAX_NAMESPACE, PwRelaxWorkChain),
             (cls._SCF_NAMESPACE, PwBaseWorkChain),
             (cls._SFE_NAMESPACE, PwBaseWorkChain),
-            (cls._SURFACE_ENERGY_NAMESPACE, PwBaseWorkChain),
         ]:
             overrides = inputs.get(namespace, {})
 
             if workchain_type == PwRelaxWorkChain:
-                overrides.setdefault('base_relax', {})['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
                 overrides['pseudo_family'] = inputs.get('pseudo_family', None)
 
@@ -270,10 +236,10 @@ class GSFEWorkChain(
             builder[namespace]._data = sub_builder._data
 
         if cls._RELAX_NAMESPACE in builder:
-            builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
-            if 'base_relax' in builder[cls._RELAX_NAMESPACE]:
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
+            builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
+            if 'base' in builder[cls._RELAX_NAMESPACE]:
+                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
+                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
@@ -295,7 +261,7 @@ class GSFEWorkChain(
         )
         inputs.metadata.call_link_label = self._RELAX_NAMESPACE
         inputs.structure = self.inputs.structure
-        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base.kpoints_distance = self.inputs.kpoints_distance
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for primitive structure')
         return {f"workchain_relax": running}
@@ -360,14 +326,12 @@ class GSFEWorkChain(
         self.ctx.structure_keys = structure_keys
         self.ctx.number_of_structures = len(structure_keys)
         self.ctx.conventional_structure = generated_structures['conventional_structure']
-        self.ctx.cleavaged_structure = generated_structures['cleavaged_structure']
         self.ctx.surface_area = generated_structures['surface_area'].value
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
 
         self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(self.ctx.conventional_structure)
-        self.ctx.surface_multiplier = self._calculate_structure_multiplier(self.ctx.cleavaged_structure)
 
         self.out('faulted_structure_data', faulted_structure_data)
         self.out('structure_map', structure_map_node)
@@ -396,9 +360,6 @@ class GSFEWorkChain(
         kpoints_scf = self._get_kpoints_scf()
         
         self.ctx.kpoints_scf = kpoints_scf
-
-        # Calculate kpoints for surface energy using helper method
-        self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf)
 
     def should_run_scf(self) -> bool:
         return self._SCF_NAMESPACE in self.inputs
@@ -520,48 +481,6 @@ class GSFEWorkChain(
         })
         self.ctx.iteration += 1
 
-    def should_run_surface_energy(self) -> bool:
-        return self._SURFACE_ENERGY_NAMESPACE in self.inputs
-
-    def run_surface_energy(self) -> dict[str, orm.ProcessNode]:
-        inputs = AttributeDict(
-            self.exposed_inputs(
-                PwBaseWorkChain,
-                namespace=self._SURFACE_ENERGY_NAMESPACE
-            )
-        )
-        inputs.metadata.call_link_label = self._SURFACE_ENERGY_NAMESPACE
-        inputs.pw.structure = self.ctx.cleavaged_structure
-        inputs.kpoints = self.ctx.kpoints_surface_energy
-        running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure')
-        return {f"workchain_surface_energy": running}
-
-    def inspect_surface_energy(self) -> ty.Optional[ExitCode]:
-        workchain = self.ctx.workchain_surface_energy
-        if not workchain.is_finished_ok:
-            self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
-
-        self.report(f'PwBaseWorkChain<{self.ctx.workchain_surface_energy.pk}> finished')
-
-        total_energy_slab = workchain.outputs.output_parameters.get('energy')
-        if 'total_energy_conventional_geometry' in self.ctx:
-            self.ctx.surface_energy_j_m2 = self._calculate_surface_energy(
-                total_energy_slab,
-                self.ctx.surface_multiplier,
-            )
-
-        # Expose outputs
-        self.out_many(
-            self.exposed_outputs(
-                workchain,
-                PwBaseWorkChain,
-                namespace=self._SURFACE_ENERGY_NAMESPACE
-            )
-        )
-
-
     def results(self) -> None:
         """Output collected results."""
         nested_results: dict[str, dict[str, dict[str, ty.Any]]] = {}
@@ -593,8 +512,5 @@ class GSFEWorkChain(
 
         if 'total_energy_conventional_geometry' in self.ctx:
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
-
-        if 'surface_energy_j_m2' in self.ctx:
-            results['surface_energy_j_m2'] = float(self.ctx.surface_energy_j_m2)
 
         self.out('gsfe_results', orm.Dict(dict=results))

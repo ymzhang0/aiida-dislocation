@@ -2,7 +2,7 @@ default_inputs:
   clean_workdir: True
   kpoints_distance: 0.3
   relax:
-    base_relax:
+    base:
       pw:
         metadata:
             options:
@@ -15,11 +15,10 @@ default_inputs:
             withmpi: True
 
   twinning:
-    base_relax:
-      pw:
-        metadata:
-          options:
-            withmpi: True
+    pw:
+      metadata:
+        options:
+          withmpi: True
 
   surface_energy:
     pw:

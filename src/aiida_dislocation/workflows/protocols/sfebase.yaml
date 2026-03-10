@@ -2,7 +2,7 @@ default_inputs:
   clean_workdir: True
   kpoints_distance: 0.5
   relax:
-    base_relax:
+    base:
       pw:
         metadata:
             options:
@@ -16,7 +16,7 @@ default_inputs:
 
   layer_relax:
     relax:
-      base_relax:
+      base:
         pw:
           settings:
             USE_FRACTIONAL: True

@@ -129,9 +129,9 @@ class RigidLayerRelaxWorkChain(ProtocolMixin, WorkChain):
         sub_builder.pop('kpoints', None)
         sub_builder.pop('kpoints_distance', None)
 
-        sub_builder['base_relax'].pop('kpoints', None)
-        sub_builder['base_relax'].pop('kpoints_distance', None)
-        sub_builder.pop('base_init_relax', None)
+        sub_builder['base'].pop('kpoints', None)
+        sub_builder['base'].pop('kpoints_distance', None)
+        sub_builder.pop('base_final_scf', None)
 
         builder[cls._RELAX_NAMESPACE]._data = sub_builder._data
 
@@ -227,12 +227,12 @@ class RigidLayerRelaxWorkChain(ProtocolMixin, WorkChain):
         )
         
         inputs.structure = self.ctx.current_structure
-        inputs.base_relax.kpoints = self.ctx.kpoints_relax
+        inputs.base.kpoints = self.ctx.kpoints_relax
         inputs.metadata.call_link_label = f'relax_{self.ctx.iteration}'
         
         # Apply fault_method specific settings
         fault_method = self.inputs.fault_method.value.lower() if self.inputs.fault_method.value else 'removal'
-        parameters = inputs.base_relax.pw.parameters.get_dict()
+        parameters = inputs.base.pw.parameters.get_dict()
         
         if fault_method == 'vacuum':
             parameters['CELL']['cell_dofree'] = 'fixc'
@@ -240,10 +240,10 @@ class RigidLayerRelaxWorkChain(ProtocolMixin, WorkChain):
         if hasattr(self.ctx, 'nbnd') and self.ctx.nbnd:
             parameters['SYSTEM']['nbnd'] = int(self.ctx.nbnd)
         
-        inputs.base_relax.pw.parameters = orm.Dict(parameters)
+        inputs.base.pw.parameters = orm.Dict(parameters)
         
         # Apply fixed coordinates for relaxation
-        settings = inputs.base_relax.pw.settings.get_dict()
+        settings = inputs.base.pw.settings.get_dict()
         settings['USE_FRACTIONAL'] = True
         
         FIXED_COORDS = numpy.full_like(
@@ -252,7 +252,7 @@ class RigidLayerRelaxWorkChain(ProtocolMixin, WorkChain):
             dtype=bool
         )
         settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
-        inputs.base_relax.pw.settings = orm.Dict(settings)
+        inputs.base.pw.settings = orm.Dict(settings)
         
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for spacing: {self.ctx.current_spacing}.')

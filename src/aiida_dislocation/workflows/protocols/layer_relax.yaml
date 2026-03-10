@@ -9,7 +9,7 @@ default_inputs:
     - 0.004
     
   relax:
-    base_relax:
+    base:
       pw:
         settings:
           USE_FRACTIONAL: True

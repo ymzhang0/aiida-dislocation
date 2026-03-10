@@ -1,16 +1,14 @@
 from aiida import orm
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext, if_, while_, append_
+from aiida.engine import WorkChain, if_, while_
 from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import create_kpoints_from_distance
 
 from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
-from math import ceil
 
 from aiida_dislocation.data.faulted_structure import FaultedStructure
-from ase.formula import Formula
 
 from .mixins import (
     StructureGenerationMixin,
@@ -33,6 +31,9 @@ class SurfaceEnergyWorkChain(
     _RELAX_NAMESPACE = "relax"
     _SCF_NAMESPACE = "scf"
     _SURFACE_ENERGY_NAMESPACE = "surface_energy"
+    
+    _RY2eV = 13.605693122990
+    _eVA22Jm2 = 1.602176634E-19 * 1E+20
     
     @classmethod
     def define(cls, spec):
@@ -137,6 +138,12 @@ class SurfaceEnergyWorkChain(
                 'required': False,
             }
         )
+        spec.output(
+            'surface_results',
+            valid_type=orm.Dict,
+            required=False,
+            help='Aggregated surface-energy results for all evaluated vacuum spacings.',
+        )
         
         spec.exit_code(
             401,
@@ -215,8 +222,7 @@ class SurfaceEnergyWorkChain(
             overrides = inputs.get(namespace, {})
 
             if workchain_type == PwRelaxWorkChain:
-                overrides['base_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
-                overrides['base_init_relax']['pseudo_family'] = inputs.get('pseudo_family', None)
+                overrides.setdefault('base', {})['pseudo_family'] = inputs.get('pseudo_family', None)
             else:
                 overrides['pseudo_family'] = inputs.get('pseudo_family', None)
 
@@ -234,10 +240,10 @@ class SurfaceEnergyWorkChain(
             builder[namespace]._data = sub_builder._data
 
         if cls._RELAX_NAMESPACE in builder:
-            builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
-            if 'base_relax' in builder[cls._RELAX_NAMESPACE]:
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
+            builder[cls._RELAX_NAMESPACE].pop('base_final_scf', None)
+            if 'base' in builder[cls._RELAX_NAMESPACE]:
+                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints', None)
+                builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         
         builder.structure = structure
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
@@ -260,7 +266,7 @@ class SurfaceEnergyWorkChain(
         )
         inputs.metadata.call_link_label = self._RELAX_NAMESPACE
         inputs.structure = self.inputs.structure
-        inputs.base_relax.kpoints_distance = self.inputs.kpoints_distance
+        inputs.base.kpoints_distance = self.inputs.kpoints_distance
         running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(f'launching PwRelaxWorkChain<{running.pk}> for primitive structure')
         return {f"workchain_relax": running}
@@ -304,10 +310,7 @@ class SurfaceEnergyWorkChain(
         self.ctx.surface_area = faulted_structure.surface_area
         
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
-        
-        unit_cell_formula = Formula(self.ctx.current_structure.get_ase().get_chemical_formula())
-        _, unit_cell_multiplier = unit_cell_formula.reduce()
-        
+
         # Calculate and store multipliers using helper method
         self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(
             self.ctx.current_structure.get_ase()
@@ -338,6 +341,7 @@ class SurfaceEnergyWorkChain(
     def setup(self):
         self.ctx.iteration = 1
         self.ctx.vacuum_spacings = sorted(self.inputs.vacuum_spacings.get_list(), reverse=True)
+        self.ctx.surface_results = []
         self.ctx.cleavaged_structure = self.ctx.faulted_structure.get_cleavaged_structure(
             vacuum_spacing=self.ctx.vacuum_spacings[0]
         )
@@ -390,6 +394,7 @@ class SurfaceEnergyWorkChain(
                 namespace=self._SCF_NAMESPACE
             )
         )
+        self.ctx.total_energy_conventional_geometry = self._get_workchain_energy(workchain)
 
     def should_run_surface_energy(self):
 
@@ -434,7 +439,48 @@ class SurfaceEnergyWorkChain(
             return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SURFACE_ENERGY
 
         self.report(f'PwBaseWorkChain<{self.ctx.workchain_surface_energy.pk}> finished')
+        total_energy_slab = self._get_workchain_energy(workchain)
+        surface_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
+        surface_energy_j_m2 = self._calculate_surface_energy(
+            total_energy_slab,
+            surface_multiplier,
+        )
+
+        self.ctx.surface_results.append({
+            'iteration': self.ctx.iteration - 1,
+            'vacuum_spacing': float(self.ctx.current_spacing),
+            'structure_formula': self.ctx.current_structure.get_chemical_formula(),
+            'surface_multiplier': surface_multiplier,
+            'total_energy_ev': float(total_energy_slab),
+            'surface_energy_j_m2': float(surface_energy_j_m2) if surface_energy_j_m2 is not None else None,
+            'workchain_pk': workchain.pk,
+            'workchain_uuid': workchain.uuid,
+        })
 
     def results(self):
         """Output collected results."""
-        pass
+        nested_results = {}
+
+        for surface_result in self.ctx.surface_results:
+            spacing_label = f"{surface_result['vacuum_spacing']:.6f}"
+            nested_results[spacing_label] = {
+                'iteration': surface_result['iteration'],
+                'vacuum_spacing': surface_result['vacuum_spacing'],
+                'structure_formula': surface_result['structure_formula'],
+                'surface_multiplier': surface_result['surface_multiplier'],
+                'total_energy_ev': surface_result['total_energy_ev'],
+                'surface_energy_j_m2': surface_result['surface_energy_j_m2'],
+                'workchain_pk': surface_result['workchain_pk'],
+                'workchain_uuid': surface_result['workchain_uuid'],
+            }
+
+        results = {
+            'results': nested_results,
+            'surface_area_angstrom2': float(self.ctx.surface_area),
+            'number_of_spacings': self.ctx.number_of_spacings,
+        }
+
+        if 'total_energy_conventional_geometry' in self.ctx:
+            results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
+
+        self.out('surface_results', orm.Dict(dict=results))

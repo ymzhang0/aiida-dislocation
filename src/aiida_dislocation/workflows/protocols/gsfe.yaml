@@ -4,7 +4,7 @@ default_inputs:
   fault_method: general
 
   relax:
-    base_relax:
+    base:
       pw:
         metadata:
             options:
@@ -17,12 +17,6 @@ default_inputs:
             withmpi: True
 
   sfe:
-    pw:
-      metadata:
-        options:
-            withmpi: True
-
-  surface_energy:
     pw:
       metadata:
         options:
