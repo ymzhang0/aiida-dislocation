@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from aiida import orm
 from ase.build import bulk
@@ -127,3 +129,45 @@ def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
     assert 'cleavaged_structure_data' in captured_outputs
     assert 'structure_map' in captured_outputs
     assert captured_outputs['cleavaged_structure_data'].uuid == process.ctx.cleavaged_structure_data.uuid
+
+
+def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(
+    aiida_profile_clean,
+    aluminum_structure,
+) -> None:
+    """Surface-energy inspection should read the formula from ``StructureData`` without ASE-only APIs."""
+    builder = SurfaceEnergyWorkChain.get_builder()
+    builder.structure = aluminum_structure
+    builder.cleavaged_structure_data = CleavagedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+        vacuum_spacings=[0.5],
+    )
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.clean_workdir = orm.Bool(False)
+    builder.pop('relax', None)
+    builder.pop('scf', None)
+    builder.pop('surface_energy', None)
+
+    process = SurfaceEnergyWorkChain(builder)
+    process.ctx.iteration = 1
+    process.ctx.current_structure_key = 'slab_idx_001'
+    process.ctx.current_structure_uuid = aluminum_structure.uuid
+    process.ctx.current_point_index = 1
+    process.ctx.current_spacing = 0.5
+    process.ctx.current_structure = aluminum_structure
+    process.ctx.surface_results = []
+    process.ctx.workchain_surface_energy = SimpleNamespace(
+        is_finished_ok=True,
+        pk=101,
+        uuid='uuid-101',
+    )
+
+    process._get_workchain_energy = lambda _: -10.0  # type: ignore[method-assign]
+    process._calculate_structure_multiplier = lambda _: 4  # type: ignore[method-assign]
+    process._calculate_surface_energy = lambda *_: 0.12  # type: ignore[method-assign]
+
+    result = process.inspect_surface_energy()
+
+    assert result is None
+    assert process.ctx.surface_results[0]['structure_formula'] == aluminum_structure.get_formula()

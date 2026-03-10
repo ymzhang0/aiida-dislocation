@@ -485,7 +485,7 @@ class SurfaceEnergyWorkChain(
             'structure_uuid': self.ctx.current_structure_uuid,
             'point_index': self.ctx.current_point_index,
             'vacuum_spacing': float(self.ctx.current_spacing),
-            'structure_formula': self.ctx.current_structure.get_chemical_formula(),
+            'structure_formula': self.ctx.current_structure.get_formula(),
             'surface_multiplier': surface_multiplier,
             'total_energy_ev': float(total_energy_slab),
             'surface_energy_j_m2': float(surface_energy_j_m2) if surface_energy_j_m2 is not None else None,
