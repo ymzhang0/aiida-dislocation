@@ -83,6 +83,7 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     process.results()
 
     assert 'surface_results' in captured_outputs
+    assert captured_outputs['surface_results'].is_stored
 
     results = captured_outputs['surface_results'].get_dict()
 
@@ -171,3 +172,52 @@ def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(
 
     assert result is None
     assert process.ctx.surface_results[0]['structure_formula'] == aluminum_structure.get_formula()
+
+
+def test_gsfe_workchain_results_output_is_stored(aiida_profile_clean, aluminum_structure) -> None:
+    """GSFE aggregated results should be emitted as a stored ``Dict`` node."""
+    builder = GSFEWorkChain.get_builder()
+    builder.structure = aluminum_structure
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.clean_workdir = orm.Bool(False)
+    builder.pop('relax', None)
+    builder.pop('scf', None)
+    builder.pop('sfe', None)
+
+    process = GSFEWorkChain(builder)
+    process.ctx.sfe_results = [
+        {
+            'structure_label': 'sfe_idx_001',
+            'structure_uuid': 'structure-uuid-001',
+            'iteration': 0,
+            'point_index': 1,
+            'direction_label': 'partial_path_000',
+            'direction_name': 'partial',
+            'path_index': 0,
+            'step_index': 0,
+            'burger_vector': [0.0, 0.0, 0.0],
+            'total_energy_ev': -10.0,
+            'gsfe_j_m2': 0.12,
+            'workchain_pk': 201,
+            'workchain_uuid': 'uuid-201',
+        }
+    ]
+    process.ctx.surface_area = 7.5
+    process.ctx.number_of_structures = 1
+    process.ctx.total_energy_conventional_geometry = -2.5
+
+    captured_outputs = {}
+
+    def _capture_output(label: str, node: orm.Data) -> None:
+        captured_outputs[label] = node
+
+    process.out = _capture_output  # type: ignore[method-assign]
+    process.results()
+
+    assert 'gsfe_results' in captured_outputs
+    assert captured_outputs['gsfe_results'].is_stored
+    results = captured_outputs['gsfe_results'].get_dict()
+    assert results['surface_area_angstrom2'] == 7.5
+    assert results['number_of_structures'] == 1
+    assert results['conventional_energy_ev'] == -2.5
+    assert results['results']['partial_path_000']['001']['sfe_j_m2'] == pytest.approx(0.12)

@@ -517,4 +517,4 @@ class GSFEWorkChain(
         if 'total_energy_conventional_geometry' in self.ctx:
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
 
-        self.out('gsfe_results', orm.Dict(dict=results))
+        self.out('gsfe_results', orm.Dict(dict=results).store())

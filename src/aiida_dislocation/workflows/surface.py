@@ -523,4 +523,4 @@ class SurfaceEnergyWorkChain(
         if 'total_energy_conventional_geometry' in self.ctx:
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
 
-        self.out('surface_results', orm.Dict(dict=results))
+        self.out('surface_results', orm.Dict(dict=results).store())
