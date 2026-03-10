@@ -8,6 +8,7 @@ from ase import Atoms
 from aiida import orm
 from aiida.engine import calcfunction
 
+from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 from aiida_dislocation.data.faulted_structure import FaultedStructureData, GeneralFaultStructurePoint
 
 
@@ -20,6 +21,14 @@ class FaultedStructureMetadata(ty.TypedDict):
     path_index: int
     step_index: int
     burger_vector: list[float]
+
+
+class CleavagedStructureMetadata(ty.TypedDict):
+    """Metadata stored for each generated slab structure."""
+
+    point_index: int
+    structure_uuid: str
+    vacuum_spacing: float
 
 
 def _normalize_faulted_structure_points(
@@ -103,6 +112,39 @@ def generate_faulted_structures(
             'path_index': point['path_index'],
             'step_index': point['step_index'],
             'burger_vector': [float(value) for value in point['burger_vector']],
+        }
+
+    outputs['structure_map'] = orm.Dict(dict=metadata)
+    return outputs
+
+
+@calcfunction
+def generate_cleavaged_structures(
+    structure: orm.StructureData,
+    cleavaged_data: CleavagedStructureData,
+) -> dict[str, orm.Data]:
+    """Generate provenance-tracked slab structures from primitive structure and cleavaged configuration."""
+    builder = cleavaged_data.get_structure_builder(structure)
+    vacuum_spacings = cleavaged_data.vacuum_spacings
+
+    if not vacuum_spacings:
+        raise ValueError('No vacuum spacings configured for cleavaged structure generation.')
+
+    metadata: dict[str, CleavagedStructureMetadata] = {}
+    outputs: dict[str, orm.Data] = {
+        'structure_map': orm.Dict(dict={}),
+        'conventional_structure': orm.StructureData(ase=builder.get_conventional_structure()),
+        'surface_area': orm.Float(float(builder.surface_area)),
+    }
+
+    for index, vacuum_spacing in enumerate(vacuum_spacings, start=1):
+        key = f'slab_idx_{index:03d}'
+        structure_node = orm.StructureData(ase=builder.get_cleavaged_structure(vacuum_spacing=vacuum_spacing))
+        outputs[key] = structure_node
+        metadata[key] = {
+            'point_index': index,
+            'structure_uuid': structure_node.uuid,
+            'vacuum_spacing': float(vacuum_spacing),
         }
 
     outputs['structure_map'] = orm.Dict(dict=metadata)

@@ -4,12 +4,18 @@ import typing as ty
 from copy import deepcopy
 
 import numpy
+from aiida.common.exceptions import ModificationNotAllowed
+from aiida.orm import Data
 from ase import Atoms
+from ase.io.jsonio import decode as ase_decode
+from ase.io.jsonio import encode
 
-from aiida_dislocation.tools.structure_utils import group_by_layers
-from aiida_dislocation.data.cleavaged_structure import CleavagedStructure, CleavagedStructureData
+from aiida_dislocation.tools.structure_utils import get_strukturbericht, group_by_layers
+from aiida_dislocation.data.cleavaged_structure import CleavagedStructure
 from aiida_dislocation.data.gliding_systems import (
     FaultConfig,
+    GlidingSystem,
+    get_gliding_system,
 )
 from aiida_dislocation.tools.structure_builder import (
     build_atoms_from_stacking_removal,
@@ -192,5 +198,92 @@ class FaultedStructure(CleavagedStructure):
             return structures_list
         return None
 
-class FaultedStructureData(CleavagedStructureData, FaultedStructure):
-    """AiiDA data node embedding faulted-structure logic on top of cleavaged-structure data."""
+class FaultedStructureData(Data, FaultedStructure):
+    """AiiDA data node embedding faulted-structure logic."""
+
+    ASE_ATOMS_KEY = 'ase_atoms_json'
+    N_UNIT_CELLS_KEY = 'n_unit_cells'
+    GLIDING_PLANE_KEY = 'gliding_plane'
+    STRUKTURBERICHT_KEY = 'strukturbericht'
+
+    def __init__(
+        self,
+        ase: ty.Optional[Atoms] = None,
+        n_unit_cells: ty.Optional[int] = None,
+        gliding_plane: ty.Optional[str] = None,
+        strukturbericht: ty.Optional[str] = None,
+        **kwargs: ty.Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        if ase is None:
+            return
+
+        if n_unit_cells is None:
+            raise ValueError('`n_unit_cells` must be provided when initializing `FaultedStructureData` with `ase`.')
+
+        resolved_strukturbericht = strukturbericht or get_strukturbericht(ase)
+        if resolved_strukturbericht is None:
+            raise ValueError('Failed to detect `strukturbericht` from the provided ASE structure.')
+
+        resolved_gliding_system = get_gliding_system(resolved_strukturbericht)
+        if resolved_gliding_system is None:
+            raise ValueError(f'No gliding system found for Strukturbericht `{resolved_strukturbericht}`.')
+
+        resolved_gliding_plane = gliding_plane or resolved_gliding_system.default_plane
+
+        self.set_ase(ase)
+        self._set_attribute(self.N_UNIT_CELLS_KEY, int(n_unit_cells))
+        self._set_attribute(self.GLIDING_PLANE_KEY, resolved_gliding_plane)
+        self._set_attribute(self.STRUKTURBERICHT_KEY, resolved_strukturbericht)
+
+    def _set_attribute(self, key: str, value: ty.Any) -> None:
+        """Set an attribute before storing the node."""
+        if self.is_stored:
+            raise ModificationNotAllowed('`FaultedStructureData` attributes cannot be modified after storing.')
+        self.base.attributes.set(key, value)
+
+    def set_ase(self, ase_atoms: Atoms) -> None:
+        """Set the ASE atoms content, serializing to JSON."""
+        self._set_attribute(self.ASE_ATOMS_KEY, encode(ase_atoms))
+
+    @property
+    def unit_cell(self) -> Atoms:
+        """Retrieve ASE atoms from attributes."""
+        json_str = self.base.attributes.get(self.ASE_ATOMS_KEY, None)
+        if json_str is None:
+            raise AttributeError('No ASE atoms set for this FaultedStructureData.')
+        return ase_decode(json_str)
+
+    def get_ase(self) -> Atoms:
+        """Return the stored structure as ASE atoms."""
+        return self.unit_cell
+
+    @property
+    def n_unit_cells(self) -> int:
+        """Return the stored number of repeated unit cells."""
+        return int(self.base.attributes.get(self.N_UNIT_CELLS_KEY))
+
+    @property
+    def gliding_plane(self) -> str:
+        """Return the stored gliding plane."""
+        return self.base.attributes.get(self.GLIDING_PLANE_KEY)
+
+    @property
+    def strukturbericht(self) -> str:
+        """Return the stored Strukturbericht designation."""
+        return self.base.attributes.get(self.STRUKTURBERICHT_KEY)
+
+    @property
+    def gliding_system(self) -> GlidingSystem:
+        """Resolve the gliding system from the stored Strukturbericht."""
+        gliding_system = get_gliding_system(self.strukturbericht)
+        if gliding_system is None:
+            raise ValueError(f'No gliding system found for Strukturbericht `{self.strukturbericht}`.')
+        return gliding_system
+
+    @property
+    def structure_data(self) -> 'orm.StructureData':
+        """Return the stored unit cell as AiiDA ``StructureData``."""
+        from aiida import orm
+
+        return orm.StructureData(ase=self.unit_cell)

@@ -124,6 +124,10 @@ def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_stru
 
     assert 'base' in builder.relax
     assert 'base_final_scf' not in builder.relax
+    assert hasattr(builder, 'cleavaged_structure_data')
+    assert not hasattr(builder, 'n_repeats')
+    assert not hasattr(builder, 'gliding_plane')
+    assert not hasattr(builder, 'vacuum_spacings')
     assert captured_overrides['base']['pseudo_family'] == pseudo_family
     assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
 

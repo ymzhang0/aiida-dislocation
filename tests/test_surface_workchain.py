@@ -28,10 +28,12 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     """Surface workchain results should retain one entry per evaluated vacuum spacing."""
     builder = SurfaceEnergyWorkChain.get_builder()
     builder.structure = aluminum_structure
+    builder.cleavaged_structure_data = CleavagedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+        vacuum_spacings=[0.5, 1.0],
+    )
     builder.kpoints_distance = orm.Float(0.3)
-    builder.n_repeats = orm.Int(4)
-    builder.gliding_plane = orm.Str('111')
-    builder.vacuum_spacings = orm.List(list=[0.5, 1.0])
     builder.clean_workdir = orm.Bool(False)
     builder.pop('relax', None)
     builder.pop('scf', None)
@@ -41,6 +43,9 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     process.ctx.surface_results = [
         {
             'iteration': 1,
+            'structure_label': 'slab_idx_001',
+            'structure_uuid': 'slab-uuid-001',
+            'point_index': 1,
             'vacuum_spacing': 0.5,
             'structure_formula': 'Al4',
             'surface_multiplier': 4,
@@ -51,6 +56,9 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
         },
         {
             'iteration': 2,
+            'structure_label': 'slab_idx_002',
+            'structure_uuid': 'slab-uuid-002',
+            'point_index': 2,
             'vacuum_spacing': 1.0,
             'structure_formula': 'Al4',
             'surface_multiplier': 4,
@@ -81,6 +89,8 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     assert results['conventional_energy_ev'] == -2.5
     assert results['results']['0.500000']['surface_energy_j_m2'] == pytest.approx(0.12)
     assert results['results']['1.000000']['surface_energy_j_m2'] == pytest.approx(0.18)
+    assert results['results']['0.500000']['structure_label'] == 'slab_idx_001'
+    assert results['results']['1.000000']['point_index'] == 2
     assert results['results']['0.500000']['workchain_pk'] == 101
     assert results['results']['1.000000']['workchain_uuid'] == 'uuid-102'
 
@@ -92,10 +102,12 @@ def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
     """Surface workflow should build and expose ``CleavagedStructureData``."""
     builder = SurfaceEnergyWorkChain.get_builder()
     builder.structure = aluminum_structure
+    builder.cleavaged_structure_data = CleavagedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+        vacuum_spacings=[0.5, 1.0],
+    )
     builder.kpoints_distance = orm.Float(0.3)
-    builder.n_repeats = orm.Int(4)
-    builder.gliding_plane = orm.Str('111')
-    builder.vacuum_spacings = orm.List(list=[0.5, 1.0])
     builder.clean_workdir = orm.Bool(False)
     builder.pop('relax', None)
     builder.pop('scf', None)
@@ -113,4 +125,5 @@ def test_surface_workchain_generate_structures_uses_cleavaged_structure_data(
     assert result is None
     assert isinstance(process.ctx.cleavaged_structure_data, CleavagedStructureData)
     assert 'cleavaged_structure_data' in captured_outputs
+    assert 'structure_map' in captured_outputs
     assert captured_outputs['cleavaged_structure_data'].uuid == process.ctx.cleavaged_structure_data.uuid

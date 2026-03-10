@@ -7,8 +7,6 @@ from aiida.common.exceptions import ModificationNotAllowed
 from aiida.orm import Data
 from ase import Atoms
 from ase.build import make_supercell
-from ase.io.jsonio import decode as ase_decode
-from ase.io.jsonio import encode
 from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
@@ -22,7 +20,7 @@ from aiida_dislocation.tools.structure_utils import get_strukturbericht, group_b
 
 
 class CleavagedStructure:
-    """Shared logic for conventional and cleavaged structures."""
+    """Helper for conventional and cleavaged structure generation."""
 
     def __init__(
         self,
@@ -142,43 +140,31 @@ class CleavagedStructure:
         )
 
 
-class CleavagedStructureData(Data, CleavagedStructure):
-    """AiiDA data node for provenance-tracked cleavaged structures."""
+class CleavagedStructureData(Data):
+    """Pure configuration node for cleavaged slab generation."""
 
-    ASE_ATOMS_KEY = 'ase_atoms_json'
     N_UNIT_CELLS_KEY = 'n_unit_cells'
     GLIDING_PLANE_KEY = 'gliding_plane'
-    STRUKTURBERICHT_KEY = 'strukturbericht'
+    VACUUM_SPACINGS_KEY = 'vacuum_spacings'
 
     def __init__(
         self,
-        ase: ty.Optional[Atoms] = None,
         n_unit_cells: ty.Optional[int] = None,
         gliding_plane: ty.Optional[str] = None,
-        strukturbericht: ty.Optional[str] = None,
+        vacuum_spacings: ty.Optional[ty.Sequence[float]] = None,
         **kwargs: ty.Any,
     ) -> None:
         super().__init__(**kwargs)
-        if ase is None:
+        if n_unit_cells is None and gliding_plane is None and vacuum_spacings is None:
             return
 
-        if n_unit_cells is None:
-            raise ValueError('`n_unit_cells` must be provided when initializing `CleavagedStructureData` with `ase`.')
+        resolved_n_unit_cells = 4 if n_unit_cells is None else int(n_unit_cells)
+        resolved_gliding_plane = '' if gliding_plane is None else str(gliding_plane)
+        resolved_vacuum_spacings = [float(value) for value in (vacuum_spacings or [1.0])]
 
-        resolved_strukturbericht = strukturbericht or get_strukturbericht(ase)
-        if resolved_strukturbericht is None:
-            raise ValueError('Failed to detect `strukturbericht` from the provided ASE structure.')
-
-        resolved_gliding_system = get_gliding_system(resolved_strukturbericht)
-        if resolved_gliding_system is None:
-            raise ValueError(f'No gliding system found for Strukturbericht `{resolved_strukturbericht}`.')
-
-        resolved_gliding_plane = gliding_plane or resolved_gliding_system.default_plane
-
-        self.set_ase(ase)
-        self._set_attribute(self.N_UNIT_CELLS_KEY, int(n_unit_cells))
+        self._set_attribute(self.N_UNIT_CELLS_KEY, resolved_n_unit_cells)
         self._set_attribute(self.GLIDING_PLANE_KEY, resolved_gliding_plane)
-        self._set_attribute(self.STRUKTURBERICHT_KEY, resolved_strukturbericht)
+        self._set_attribute(self.VACUUM_SPACINGS_KEY, resolved_vacuum_spacings)
 
     def _set_attribute(self, key: str, value: ty.Any) -> None:
         """Set an attribute before storing the node."""
@@ -186,48 +172,29 @@ class CleavagedStructureData(Data, CleavagedStructure):
             raise ModificationNotAllowed('`CleavagedStructureData` attributes cannot be modified after storing.')
         self.base.attributes.set(key, value)
 
-    def set_ase(self, ase_atoms: Atoms) -> None:
-        """Serialize and store ASE atoms."""
-        self._set_attribute(self.ASE_ATOMS_KEY, encode(ase_atoms))
-
-    @property
-    def unit_cell(self) -> Atoms:
-        """Return the stored unit cell as ASE atoms."""
-        json_str = self.base.attributes.get(self.ASE_ATOMS_KEY, None)
-        if json_str is None:
-            raise AttributeError('No ASE atoms set for this CleavagedStructureData.')
-        return ase_decode(json_str)
-
-    def get_ase(self) -> Atoms:
-        """Return the stored structure as ASE atoms."""
-        return self.unit_cell
-
     @property
     def n_unit_cells(self) -> int:
-        """Return the stored number of repeated unit cells."""
+        """Return the configured number of repeated unit cells."""
         return int(self.base.attributes.get(self.N_UNIT_CELLS_KEY))
 
     @property
     def gliding_plane(self) -> str:
-        """Return the stored gliding plane."""
-        return self.base.attributes.get(self.GLIDING_PLANE_KEY)
+        """Return the configured gliding plane."""
+        return str(self.base.attributes.get(self.GLIDING_PLANE_KEY, ''))
 
     @property
-    def strukturbericht(self) -> str:
-        """Return the stored Strukturbericht designation."""
-        return self.base.attributes.get(self.STRUKTURBERICHT_KEY)
+    def vacuum_spacings(self) -> list[float]:
+        """Return the configured vacuum spacings."""
+        return [float(value) for value in self.base.attributes.get(self.VACUUM_SPACINGS_KEY, [1.0])]
 
-    @property
-    def gliding_system(self) -> GlidingSystem:
-        """Resolve the gliding system from the stored Strukturbericht."""
-        gliding_system = get_gliding_system(self.strukturbericht)
-        if gliding_system is None:
-            raise ValueError(f'No gliding system found for Strukturbericht `{self.strukturbericht}`.')
-        return gliding_system
-
-    @property
-    def structure_data(self) -> 'orm.StructureData':
-        """Return the stored unit cell as AiiDA ``StructureData``."""
+    def get_structure_builder(self, structure: 'orm.StructureData | Atoms') -> CleavagedStructure:
+        """Return a helper bound to a specific structure."""
         from aiida import orm
 
-        return orm.StructureData(ase=self.unit_cell)
+        ase_atoms = structure.get_ase() if isinstance(structure, orm.StructureData) else structure
+        effective_gliding_plane = self.gliding_plane or None
+        return CleavagedStructure(
+            ase_atoms=ase_atoms,
+            n_unit_cells=self.n_unit_cells,
+            gliding_plane=effective_gliding_plane,
+        )

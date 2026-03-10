@@ -8,6 +8,7 @@ from aiida_quantumespresso.workflows.protocols.utils import ProtocolMixin
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 
+from aiida_dislocation.calculations import generate_cleavaged_structures
 from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 
 from .mixins import (
@@ -39,15 +40,16 @@ class SurfaceEnergyWorkChain(
     def define(cls, spec):
         super().define(spec)
 
-        spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
-                help='The number of layers in the supercell')
-        spec.input('gliding_plane', valid_type=orm.Str, required=False, default=lambda: orm.Str(),
-                help='The normal vector for the supercell. Note that please always put the z axis at the last.')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
+        spec.input(
+            'cleavaged_structure_data',
+            valid_type=CleavagedStructureData,
+            required=False,
+            default=lambda: CleavagedStructureData(n_unit_cells=4, vacuum_spacings=[1.0]),
+            help='Configuration for cleavaged slab generation.',
+        )
         spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
                 help='The distance between kpoints for the kpoints generation')
-        spec.input('vacuum_spacings', valid_type=orm.List, required=False, default=lambda: orm.List(default_value=[1.0]),
-                    help='The vacuum spacings for the surface energy calculation.')
         spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
                     help='If `True`, work directories of all called calculation will be cleaned at the end of execution.')
 
@@ -148,7 +150,13 @@ class SurfaceEnergyWorkChain(
             'cleavaged_structure_data',
             valid_type=CleavagedStructureData,
             required=False,
-            help='The provenance-tracked cleavaged-structure data used by the surface workflow.',
+            help='The cleavaged-structure configuration used by the surface workflow.',
+        )
+        spec.output(
+            'structure_map',
+            valid_type=orm.Dict,
+            required=False,
+            help='Mapping between generated slab labels and their vacuum-spacing metadata.',
         )
         
         spec.exit_code(
@@ -253,10 +261,13 @@ class SurfaceEnergyWorkChain(
                 builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         
         builder.structure = structure
+        builder.cleavaged_structure_data = CleavagedStructureData(
+            n_unit_cells=inputs.get('n_repeats', 4),
+            gliding_plane=inputs.get('gliding_plane', ''),
+            vacuum_spacings=inputs.get('vacuum_spacings', [1.0]),
+        )
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
-        builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
-        builder.vacuum_spacings = orm.List(inputs['vacuum_spacings'])
 
         return builder
 
@@ -298,38 +309,48 @@ class SurfaceEnergyWorkChain(
         )
 
     def generate_structures(self):
-        """Generate base structures (conventional and cleavaged). 
-        Subclasses should override generate_faulted_structure() to generate faulted structures."""
-        
+        """Generate provenance-tracked conventional and slab structures."""
         if 'current_structure' not in self.ctx:
             self.ctx.current_structure = self.inputs.structure
-        
-        gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
+
         try:
-            cleavaged_structure_data = CleavagedStructureData(
-                ase=self.ctx.current_structure.get_ase(),
-                gliding_plane=gliding_plane,
-                n_unit_cells=self.inputs.n_repeats.value,
+            generated_structures = generate_cleavaged_structures(
+                structure=self.ctx.current_structure,
+                cleavaged_data=self.inputs.cleavaged_structure_data,
             )
-            cleavaged_structure_data.store()
         except ValueError as exception:
-            self.report(f'Failed to prepare cleavaged structure data: {exception}')
+            self.report(f'Failed to generate cleavaged structures: {exception}')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.cleavaged_structure_data = cleavaged_structure_data
-        self.ctx.conventional_structure = cleavaged_structure_data.get_conventional_structure()
-        self.ctx.surface_area = cleavaged_structure_data.surface_area
-        
+        structure_map_node = generated_structures['structure_map']
+        structure_map = structure_map_node.get_dict()
+        structure_keys = sorted(structure_map.keys())
+
+        if not structure_keys:
+            self.report('No slab structures were generated for the selected configuration.')
+            return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
+
+        self.ctx.cleavaged_structure_data = self.inputs.cleavaged_structure_data
+        self.ctx.generated_structures = {
+            key: value for key, value in generated_structures.items() if key.startswith('slab_idx_')
+        }
+        self.ctx.structure_map_node = structure_map_node
+        self.ctx.structure_map = structure_map
+        self.ctx.structure_keys = structure_keys
+        self.ctx.number_of_spacings = len(structure_keys)
+        self.ctx.conventional_structure = generated_structures['conventional_structure']
+        self.ctx.surface_area = generated_structures['surface_area'].value
+
         self.report(f'Surface area of the conventional geometry: {self.ctx.surface_area} Angstrom^2')
 
-        # Calculate and store multipliers using helper method
         self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(
             self.ctx.current_structure.get_ase()
         )
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(
             self.ctx.conventional_structure
         )
-        self.out('cleavaged_structure_data', cleavaged_structure_data)
+        self.out('cleavaged_structure_data', self.inputs.cleavaged_structure_data)
+        self.out('structure_map', structure_map_node)
 
     def _get_kpoints_scf(self):
         """Get or create kpoints_scf. Returns kpoints_scf KpointsData object."""
@@ -337,9 +358,7 @@ class SurfaceEnergyWorkChain(
             kpoints_scf = self.ctx.kpoints_scf
         else:
             inputs = {
-                'structure': orm.StructureData(
-                    ase=self.ctx.conventional_structure
-                    ),
+                'structure': self.ctx.conventional_structure,
                 'distance': self.inputs.kpoints_distance,
                 'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
                 'metadata': {
@@ -351,20 +370,10 @@ class SurfaceEnergyWorkChain(
         return kpoints_scf
 
     def setup(self):
-        self.ctx.iteration = 1
-        self.ctx.vacuum_spacings = sorted(self.inputs.vacuum_spacings.get_list(), reverse=True)
+        self.ctx.iteration = 0
         self.ctx.surface_results = []
-        self.ctx.cleavaged_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
-            vacuum_spacing=self.ctx.vacuum_spacings[0]
-        )
-        self.ctx.number_of_spacings = len(self.ctx.vacuum_spacings)
-        # Get kpoints_scf
         kpoints_scf = self._get_kpoints_scf()
-        
         self.ctx.kpoints_scf = kpoints_scf
-
-        # Calculate kpoints for surface energy using helper method
-        self.ctx.kpoints_surface_energy = self._setup_surface_energy_kpoints(kpoints_scf)
 
     def should_run_scf(self):
         return self._SCF_NAMESPACE in self.inputs
@@ -379,10 +388,8 @@ class SurfaceEnergyWorkChain(
 
         inputs.metadata.call_link_label = self._SCF_NAMESPACE
 
-        inputs.pw.structure = orm.StructureData(
-            ase=self.ctx.conventional_structure
-            )        
-        
+        inputs.pw.structure = self.ctx.conventional_structure
+
         inputs.kpoints = self.ctx.kpoints_scf
 
         running = self.submit(PwBaseWorkChain, **inputs)
@@ -413,12 +420,18 @@ class SurfaceEnergyWorkChain(
         if self._SURFACE_ENERGY_NAMESPACE not in self.inputs:
             return False
 
-        if self.ctx.vacuum_spacings == []:
+        if self.ctx.iteration >= self.ctx.number_of_spacings:
             return False
 
-        self.ctx.current_spacing = self.ctx.vacuum_spacings.pop() 
-        self.ctx.cleavaged_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
-            vacuum_spacing=self.ctx.current_spacing
+        self.ctx.current_structure_key = self.ctx.structure_keys[self.ctx.iteration]
+        self.ctx.current_structure = self.ctx.generated_structures[self.ctx.current_structure_key]
+        current_metadata = self.ctx.structure_map[self.ctx.current_structure_key]
+        self.ctx.current_spacing = float(current_metadata['vacuum_spacing'])
+        self.ctx.current_point_index = int(current_metadata['point_index'])
+        self.ctx.current_structure_uuid = current_metadata['structure_uuid']
+        self.ctx.kpoints_surface_energy = self._calculate_kpoints_for_structure(
+            self.ctx.current_structure,
+            self.ctx.kpoints_scf,
         )
 
         return True
@@ -430,17 +443,15 @@ class SurfaceEnergyWorkChain(
                 namespace=self._SURFACE_ENERGY_NAMESPACE
             )
         )
-        inputs.metadata.call_link_label = f"spacing_{self.ctx.iteration:02d}"
-        self.ctx.current_structure = self.ctx.cleavaged_structure_data.get_cleavaged_structure(
-            vacuum_spacing=self.ctx.current_spacing
-        )
-        inputs.pw.structure = orm.StructureData(ase=self.ctx.current_structure)
+        inputs.metadata.call_link_label = self.ctx.current_structure_key
+        inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_surface_energy 
 
         running = self.submit(PwBaseWorkChain, **inputs)
-        self.report(f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure {self.ctx.iteration}/{self.ctx.number_of_spacings}...')
-
-        self.ctx.iteration += 1
+        self.report(
+            f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure '
+            f'{self.ctx.iteration + 1}/{self.ctx.number_of_spacings} ({self.ctx.current_structure_key}).'
+        )
 
         return {f"workchain_surface_energy": running}
 
@@ -459,7 +470,10 @@ class SurfaceEnergyWorkChain(
         )
 
         self.ctx.surface_results.append({
-            'iteration': self.ctx.iteration - 1,
+            'iteration': self.ctx.iteration,
+            'structure_label': self.ctx.current_structure_key,
+            'structure_uuid': self.ctx.current_structure_uuid,
+            'point_index': self.ctx.current_point_index,
             'vacuum_spacing': float(self.ctx.current_spacing),
             'structure_formula': self.ctx.current_structure.get_chemical_formula(),
             'surface_multiplier': surface_multiplier,
@@ -468,6 +482,7 @@ class SurfaceEnergyWorkChain(
             'workchain_pk': workchain.pk,
             'workchain_uuid': workchain.uuid,
         })
+        self.ctx.iteration += 1
 
     def results(self):
         """Output collected results."""
@@ -477,6 +492,9 @@ class SurfaceEnergyWorkChain(
             spacing_label = f"{surface_result['vacuum_spacing']:.6f}"
             nested_results[spacing_label] = {
                 'iteration': surface_result['iteration'],
+                'structure_label': surface_result['structure_label'],
+                'structure_uuid': surface_result['structure_uuid'],
+                'point_index': surface_result['point_index'],
                 'vacuum_spacing': surface_result['vacuum_spacing'],
                 'structure_formula': surface_result['structure_formula'],
                 'surface_multiplier': surface_result['surface_multiplier'],
