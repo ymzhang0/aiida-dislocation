@@ -1,4 +1,4 @@
-"""Regression tests for ``FaultedStructureData`` and provenance-aware structure generation."""
+"""Regression tests for ``FaultedStructureData`` and provenance-aware GSFE structure generation."""
 
 from __future__ import annotations
 
@@ -32,74 +32,36 @@ def aluminum_fcc() -> Atoms:
     return bulk('Al', 'fcc', a=4.05)
 
 
-def test_faulted_structure_data_requires_unit_cell_repeat_count(aluminum_fcc) -> None:
-    """Creating ``FaultedStructureData`` from an ASE structure requires ``n_unit_cells``."""
-    with pytest.raises(ValueError, match='n_unit_cells'):
-        FaultedStructureData(ase=aluminum_fcc)
+def test_faulted_structure_data_round_trips_attributes(aiida_profile_clean) -> None:
+    """Stored ``FaultedStructureData`` should preserve only configuration attributes."""
+    node = FaultedStructureData(n_unit_cells=4, gliding_plane='111')
 
-
-def test_faulted_structure_data_auto_detects_metadata(aiida_profile_clean, aluminum_fcc) -> None:
-    """``FaultedStructureData`` should infer the Strukturbericht and default gliding plane."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4)
-
-    assert node.strukturbericht == 'A1'
-    assert node.gliding_plane == '111'
-    assert node.gliding_system.strukturbericht == 'A1'
-
-
-def test_faulted_structure_data_round_trips_attributes(aiida_profile_clean, aluminum_fcc) -> None:
-    """Stored ``FaultedStructureData`` should preserve structure and metadata."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='111')
-
-    assert node.strukturbericht == 'A1'
-    assert node.gliding_plane == '111'
     assert node.n_unit_cells == 4
-    _assert_atoms_match(node.unit_cell, aluminum_fcc)
-    _assert_atoms_match(node.get_ase(), aluminum_fcc)
-    _assert_atoms_match(node.structure_data.get_ase(), aluminum_fcc)
+    assert node.gliding_plane == '111'
 
     node.store()
     loaded = orm.load_node(node.pk)
 
-    assert loaded.strukturbericht == 'A1'
-    assert loaded.gliding_plane == '111'
     assert loaded.n_unit_cells == 4
-    _assert_atoms_match(loaded.unit_cell, aluminum_fcc)
+    assert loaded.gliding_plane == '111'
 
 
-def test_faulted_structure_data_is_immutable_after_store(aiida_profile_clean, aluminum_fcc) -> None:
+def test_faulted_structure_data_is_immutable_after_store(aiida_profile_clean) -> None:
     """Node attributes should not be mutable after storing the AiiDA data node."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='111').store()
+    node = FaultedStructureData(n_unit_cells=4, gliding_plane='111').store()
 
     with pytest.raises(ModificationNotAllowed):
-        node.set_ase(aluminum_fcc.copy())
-
-
-def test_faulted_structure_data_supercells_match_legacy_builders(aiida_profile_clean, aluminum_fcc) -> None:
-    """Conventional and cleavaged supercells should match the legacy builder outputs."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='111').store()
-
-    legacy_strukturbericht, legacy_conventional = get_conventional_structure(
-        aluminum_fcc,
-        gliding_plane='111',
-    )
-    _, legacy_cleavaged = get_cleavaged_structure(
-        legacy_conventional,
-        gliding_plane='111',
-        n_unit_cells=4,
-    )
-
-    assert node.strukturbericht == legacy_strukturbericht
-    _assert_atoms_match(node.get_conventional_structure(), legacy_conventional)
-    _assert_atoms_match(node.get_cleavaged_structure(), legacy_cleavaged)
+        node.base.attributes.set(FaultedStructureData.N_UNIT_CELLS_KEY, 5)
 
 
 def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_profile_clean, aluminum_fcc) -> None:
     """The calcfunction outputs should keep the same cells and atomic positions as the legacy path."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='111').store()
+    structure = orm.StructureData(ase=aluminum_fcc)
+    config = FaultedStructureData(n_unit_cells=4, gliding_plane='111').store()
 
     generated = generate_faulted_structures(
-        faulted_data=node,
+        structure=structure,
+        faulted_data=config,
         fault_mode=orm.Str('general'),
         fault_type=orm.Str('general'),
     )
@@ -143,13 +105,18 @@ def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_pro
 
 def test_generate_faulted_structures_preserves_general_fault_metadata(aiida_profile_clean, aluminum_fcc) -> None:
     """Generalized fault metadata should remain aligned with the generated structures."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='111').store()
-    expected_points = node.get_faulted_structure(fault_mode='general', fault_type='general')
+    structure = orm.StructureData(ase=aluminum_fcc)
+    config = FaultedStructureData(n_unit_cells=4, gliding_plane='111').store()
+    expected_points = config.get_structure_builder(structure).get_faulted_structure(
+        fault_mode='general',
+        fault_type='general',
+    )
 
     assert expected_points is not None
 
     generated = generate_faulted_structures(
-        faulted_data=node,
+        structure=structure,
+        faulted_data=config,
         fault_mode=orm.Str('general'),
         fault_type=orm.Str('general'),
     )
@@ -171,11 +138,13 @@ def test_generate_faulted_structures_preserves_general_fault_metadata(aiida_prof
 
 def test_generate_faulted_structures_raises_for_unsupported_fault(aiida_profile_clean, aluminum_fcc) -> None:
     """The calcfunction should fail cleanly when the requested fault is not available."""
-    node = FaultedStructureData(ase=aluminum_fcc, n_unit_cells=4, gliding_plane='100').store()
+    structure = orm.StructureData(ase=aluminum_fcc)
+    config = FaultedStructureData(n_unit_cells=4, gliding_plane='100').store()
 
     with pytest.raises(ValueError, match='No faulted structures could be generated'):
         generate_faulted_structures(
-            faulted_data=node,
+            structure=structure,
+            faulted_data=config,
             fault_mode=orm.Str('removal'),
             fault_type=orm.Str('intrinsic'),
         )

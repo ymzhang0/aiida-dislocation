@@ -92,8 +92,26 @@ def test_gsfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structu
 
     assert 'base' in builder.relax
     assert 'base_final_scf' not in builder.relax
+    assert hasattr(builder, 'faulted_structure_data')
+    assert not hasattr(builder, 'n_repeats')
+    assert not hasattr(builder, 'gliding_plane')
     assert captured_overrides['base']['pseudo_family'] == pseudo_family
     assert captured_overrides['base_final_scf']['pseudo_family'] == pseudo_family
+
+
+def test_gsfe_builder_constructs_faulted_structure_data_from_kwargs(monkeypatch, aluminum_structure) -> None:
+    """GSFE builder should construct the config node from explicit keyword arguments."""
+    _patch_sub_builders(monkeypatch)
+
+    builder = GSFEWorkChain.get_builder_from_protocol(
+        object(),
+        aluminum_structure,
+        n_repeats=6,
+        gliding_plane='100',
+    )
+
+    assert builder.faulted_structure_data.n_unit_cells == 6
+    assert builder.faulted_structure_data.gliding_plane == '100'
 
 
 def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structure) -> None:

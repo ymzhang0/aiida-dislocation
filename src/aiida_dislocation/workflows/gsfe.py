@@ -46,11 +46,14 @@ class GSFEWorkChain(
     def define(cls, spec) -> None:
         super().define(spec)
 
-        spec.input('n_repeats', valid_type=orm.Int, required=False, default=lambda: orm.Int(4),
-                help='The number of layers in the supercell')
-        spec.input('gliding_plane', valid_type=orm.Str, required=False, default=lambda: orm.Str(),
-                help='The normal vector for the supercell. Note that please always put the z axis at the last.')
         spec.input('structure', valid_type=orm.StructureData, required=True,)
+        spec.input(
+            'faulted_structure_data',
+            valid_type=FaultedStructureData,
+            required=False,
+            default=lambda: FaultedStructureData(n_unit_cells=4),
+            help='Configuration for GSFE faulted-structure generation.',
+        )
         spec.input('kpoints_distance', valid_type=orm.Float, required=False, default=lambda: orm.Float(0.3),
                 help='The distance between kpoints for the kpoints generation')
         spec.input('clean_workdir', valid_type=orm.Bool, default=lambda: orm.Bool(False),
@@ -144,7 +147,7 @@ class GSFEWorkChain(
             'faulted_structure_data',
             valid_type=FaultedStructureData,
             required=False,
-            help='The provenance-tracked faulted structure input data used for GSFE generation.',
+            help='The faulted-structure configuration used for GSFE generation.',
         )
         spec.output(
             'structure_map',
@@ -200,6 +203,8 @@ class GSFEWorkChain(
             structure,
             protocol='moderate',
             overrides=None,
+            n_repeats: ty.Optional[int | orm.Int] = None,
+            gliding_plane: ty.Optional[str | orm.Str] = None,
             **kwargs
         ):
         """Return a builder prepopulated with inputs selected according to the chosen protocol.
@@ -243,8 +248,13 @@ class GSFEWorkChain(
                 builder[cls._RELAX_NAMESPACE]['base'].pop('kpoints_distance', None)
         
         builder.structure = structure
+        resolved_n_repeats = n_repeats.value if isinstance(n_repeats, orm.Int) else n_repeats
+        resolved_gliding_plane = gliding_plane.value if isinstance(gliding_plane, orm.Str) else gliding_plane
+        builder.faulted_structure_data = FaultedStructureData(
+            n_unit_cells=inputs.get('n_repeats', 4) if resolved_n_repeats is None else resolved_n_repeats,
+            gliding_plane=inputs.get('gliding_plane', '') if resolved_gliding_plane is None else resolved_gliding_plane,
+        )
         builder.kpoints_distance = orm.Float(inputs['kpoints_distance'])
-        builder.gliding_plane = orm.Str(inputs.get('gliding_plane', ''))
         builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
 
         return builder
@@ -291,18 +301,11 @@ class GSFEWorkChain(
         
         if 'current_structure' not in self.ctx:
             self.ctx.current_structure = self.inputs.structure
-        
-        gliding_plane = self.inputs.gliding_plane.value if self.inputs.gliding_plane.value else None
 
         try:
-            faulted_structure_data = FaultedStructureData(
-                ase=self.ctx.current_structure.get_ase(),
-                n_unit_cells=self.inputs.n_repeats.value,
-                gliding_plane=gliding_plane,
-            )
-            faulted_structure_data.store()
             generated_structures = generate_faulted_structures(
-                faulted_structure_data=faulted_structure_data,
+                structure=self.ctx.current_structure,
+                faulted_data=self.inputs.faulted_structure_data,
                 fault_mode=orm.Str('general'),
                 fault_type=orm.Str('general'),
             )
@@ -318,7 +321,7 @@ class GSFEWorkChain(
             self.report('No generalized fault path is available for the selected structure and gliding plane.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.faulted_structure_data = faulted_structure_data
+        self.ctx.faulted_structure_data = self.inputs.faulted_structure_data
         self.ctx.generated_structures = {
             key: value for key, value in generated_structures.items() if key.startswith('sfe_idx_')
         }
@@ -334,7 +337,7 @@ class GSFEWorkChain(
         self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(self.ctx.conventional_structure)
 
-        self.out('faulted_structure_data', faulted_structure_data)
+        self.out('faulted_structure_data', self.inputs.faulted_structure_data)
         self.out('structure_map', structure_map_node)
 
     def _get_kpoints_scf(self) -> orm.KpointsData:

@@ -79,12 +79,14 @@ def _normalize_faulted_structure_points(
 
 @calcfunction
 def generate_faulted_structures(
+    structure: orm.StructureData,
     faulted_data: FaultedStructureData,
     fault_mode: orm.Str,
     fault_type: orm.Str,
 ) -> dict[str, orm.Data]:
-    """Generate provenance-tracked faulted structures from ``FaultedStructureData``."""
-    generated = faulted_data.get_faulted_structure(
+    """Generate provenance-tracked faulted structures from structure and faulted configuration."""
+    builder = faulted_data.get_structure_builder(structure)
+    generated = builder.get_faulted_structure(
         fault_mode=fault_mode.value,
         fault_type=fault_type.value,
     )
@@ -96,9 +98,9 @@ def generate_faulted_structures(
     metadata: dict[str, FaultedStructureMetadata] = {}
     outputs: dict[str, orm.Data] = {
         'structure_map': orm.Dict(dict={}),
-        'conventional_structure': orm.StructureData(ase=faulted_data.get_conventional_structure()),
-        'cleavaged_structure': orm.StructureData(ase=faulted_data.get_cleavaged_structure()),
-        'surface_area': orm.Float(float(faulted_data.surface_area)),
+        'conventional_structure': orm.StructureData(ase=builder.get_conventional_structure()),
+        'cleavaged_structure': orm.StructureData(ase=builder.get_cleavaged_structure()),
+        'surface_area': orm.Float(float(builder.surface_area)),
     }
 
     for index, point in enumerate(normalized_points, start=1):
