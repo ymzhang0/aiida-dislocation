@@ -483,6 +483,7 @@ class SurfaceEnergyWorkChain(
         )
 
         self.ctx.results[self.ctx.current_spacing_key] = {
+            'vacuum_spacing': float(self.ctx.current_spacing),
             'structure_uuid': self.ctx.current_structure.uuid,
             'total_energy_ev': float(total_energy_slab),
             'surface_energy_j_m2': float(surface_energy_j_m2) if surface_energy_j_m2 is not None else None,
