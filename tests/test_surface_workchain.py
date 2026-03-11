@@ -6,10 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 from aiida import orm
+from aiida.engine import WorkChain
 from ase.build import bulk
 
 from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 from aiida_dislocation.data.faulted_structure import FaultedStructureData
+from aiida_dislocation.workflows import mixins
 from aiida_dislocation.workflows.gsfe import GSFEWorkChain
 from aiida_dislocation.workflows.surface import SurfaceEnergyWorkChain
 
@@ -25,6 +27,103 @@ def test_gsfe_workchain_no_longer_exposes_surface_energy_namespace() -> None:
     builder = GSFEWorkChain.get_builder()
 
     assert 'surface_energy' not in builder
+
+
+def _build_process_for_cleanup_test(
+    workchain_class: type[GSFEWorkChain] | type[SurfaceEnergyWorkChain],
+    aluminum_structure: orm.StructureData,
+    clean_workdir: bool,
+):
+    """Return a minimal process instance for ``on_terminated`` tests."""
+    builder = workchain_class.get_builder()
+    builder.structure = aluminum_structure
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.clean_workdir = orm.Bool(clean_workdir)
+
+    if workchain_class is GSFEWorkChain:
+        builder.faulted_structure_data = FaultedStructureData(n_unit_cells=4, gliding_plane='111')
+        builder.pop('relax', None)
+        builder.pop('scf', None)
+        builder.pop('sfe', None)
+    else:
+        builder.cleavaged_structure_data = CleavagedStructureData(
+            n_unit_cells=4,
+            gliding_plane='111',
+            vacuum_spacings=[0.5],
+        )
+        builder.pop('relax', None)
+        builder.pop('scf', None)
+        builder.pop('surface_energy', None)
+
+    return workchain_class(builder)
+
+
+@pytest.mark.parametrize('workchain_class', [GSFEWorkChain, SurfaceEnergyWorkChain])
+def test_workchain_on_terminated_cleans_remote_folders(
+    aiida_profile_clean,
+    aluminum_structure,
+    monkeypatch: pytest.MonkeyPatch,
+    workchain_class,
+) -> None:
+    """Both workchains should clean descendant remote folders when requested."""
+    cleaned_calls: list[int] = []
+    report_messages: list[str] = []
+
+    class FakeRemoteFolder:
+        def __init__(self, pk: int, should_raise: bool = False) -> None:
+            self.pk = pk
+            self.should_raise = should_raise
+
+        def _clean(self) -> None:
+            if self.should_raise:
+                raise OSError('cleanup failed')
+            cleaned_calls.append(self.pk)
+
+    class FakeCalcJobNode:
+        def __init__(self, pk: int, should_raise: bool = False) -> None:
+            self.pk = pk
+            self.outputs = SimpleNamespace(remote_folder=FakeRemoteFolder(pk, should_raise=should_raise))
+
+    process = _build_process_for_cleanup_test(workchain_class, aluminum_structure, clean_workdir=True)
+    descendants = [FakeCalcJobNode(11), FakeCalcJobNode(12, should_raise=True), object()]
+
+    monkeypatch.setattr(WorkChain, 'on_terminated', lambda self: None)
+    monkeypatch.setattr(mixins.orm, 'CalcJobNode', FakeCalcJobNode)
+    monkeypatch.setattr(type(process.node), 'called_descendants', property(lambda _: descendants))
+    process.report = report_messages.append  # type: ignore[method-assign]
+
+    process.on_terminated()
+
+    assert cleaned_calls == [11]
+    assert any('cleaned remote folders of calculations: 11' in message for message in report_messages)
+
+
+@pytest.mark.parametrize('workchain_class', [GSFEWorkChain, SurfaceEnergyWorkChain])
+def test_workchain_on_terminated_respects_clean_workdir_false(
+    aiida_profile_clean,
+    aluminum_structure,
+    monkeypatch: pytest.MonkeyPatch,
+    workchain_class,
+) -> None:
+    """Both workchains should skip cleanup when ``clean_workdir`` is disabled."""
+    report_messages: list[str] = []
+
+    class FakeCalcJobNode:
+        def __init__(self, pk: int) -> None:
+            self.pk = pk
+            self.outputs = SimpleNamespace(remote_folder=SimpleNamespace(_clean=lambda: None))
+
+    process = _build_process_for_cleanup_test(workchain_class, aluminum_structure, clean_workdir=False)
+    descendants = [FakeCalcJobNode(21)]
+
+    monkeypatch.setattr(WorkChain, 'on_terminated', lambda self: None)
+    monkeypatch.setattr(mixins.orm, 'CalcJobNode', FakeCalcJobNode)
+    monkeypatch.setattr(type(process.node), 'called_descendants', property(lambda _: descendants))
+    process.report = report_messages.append  # type: ignore[method-assign]
+
+    process.on_terminated()
+
+    assert report_messages == ['remote folders will not be cleaned']
 
 
 def test_gsfe_workchain_generate_structures_indexes_faulted_outputs(

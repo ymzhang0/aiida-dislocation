@@ -224,3 +224,27 @@ class WorkflowInspectionMixin:
         :return: Energy value
         """
         return float(workchain.outputs.output_parameters.get('energy'))
+
+
+def clean_calcjob_remote(node: orm.CalcJobNode) -> bool:
+    """Clean the remote directory of a ``CalcJobNode``."""
+    cleaned = False
+
+    try:
+        node.outputs.remote_folder._clean()  # noqa: SLF001
+        cleaned = True
+    except (OSError, KeyError):
+        pass
+
+    return cleaned
+
+
+def clean_workchain_calcs(workchain: orm.WorkChainNode) -> list[int]:
+    """Clean all remote directories of a workchain's descendant calculations."""
+    cleaned_calcs: list[int] = []
+
+    for called_descendant in workchain.called_descendants:
+        if isinstance(called_descendant, orm.CalcJobNode) and clean_calcjob_remote(called_descendant):
+            cleaned_calcs.append(called_descendant.pk)
+
+    return cleaned_calcs

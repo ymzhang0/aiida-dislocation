@@ -22,6 +22,7 @@ from .mixins import (
     EnergyCalculationMixin,
     KpointsSetupMixin,
     WorkflowInspectionMixin,
+    clean_workchain_calcs,
 )
 
 class GSFEWorkChain(
@@ -535,3 +536,16 @@ class GSFEWorkChain(
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
 
         self.out('gsfe_results', orm.Dict(dict=results).store())
+
+    def on_terminated(self) -> None:
+        """Clean child calculation working directories if ``clean_workdir`` is enabled."""
+        super().on_terminated()
+
+        if self.inputs.clean_workdir.value is False:
+            self.report('remote folders will not be cleaned')
+            return
+
+        cleaned_calcs = clean_workchain_calcs(self.node)
+
+        if cleaned_calcs:
+            self.report(f'cleaned remote folders of calculations: {" ".join(map(str, cleaned_calcs))}')
