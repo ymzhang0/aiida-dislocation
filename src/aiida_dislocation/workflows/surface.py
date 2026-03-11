@@ -36,6 +36,11 @@ class SurfaceEnergyWorkChain(
     
     _RY2eV = 13.605693122990
     _eVA22Jm2 = 1.602176634E-19 * 1E+20
+
+    @staticmethod
+    def _get_spacing_key(vacuum_spacing: float) -> str:
+        """Return a Dict-safe key for a vacuum spacing."""
+        return f'{vacuum_spacing:.6f}'.replace('.', '_')
     
     @classmethod
     def define(cls, spec):
@@ -320,21 +325,29 @@ class SurfaceEnergyWorkChain(
             self.report(f'Failed to generate cleavaged structures: {exception}')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        structure_map_node = generated_structures['structure_map']
-        structure_map = structure_map_node.get_dict()
+        structure_map = generated_structures['structure_map'].get_dict()
         structure_keys = sorted(structure_map.keys())
 
         if not structure_keys:
             self.report('No slab structures were generated for the selected configuration.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.generated_structures = {
-            key: value for key, value in generated_structures.items() if key.startswith('slab_idx_')
-        }
-        self.ctx.structure_map_node = structure_map_node
-        self.ctx.structure_map = structure_map
-        self.ctx.structure_keys = structure_keys
-        self.ctx.number_of_spacings = len(structure_keys)
+        self.ctx.generated_structures = {}
+        self.ctx.spacing_keys = []
+
+        for structure_key in structure_keys:
+            metadata = structure_map[structure_key]
+            spacing = float(metadata['vacuum_spacing'])
+            spacing_key = self._get_spacing_key(spacing)
+            self.ctx.generated_structures[spacing_key] = {
+                'vacuum_spacing': spacing,
+                'structure': generated_structures[structure_key],
+                'structure_uuid': metadata['structure_uuid'],
+                'call_link_label': structure_key,
+            }
+            self.ctx.spacing_keys.append(spacing_key)
+
+        self.ctx.number_of_spacings = len(self.ctx.spacing_keys)
         self.ctx.conventional_structure = generated_structures['conventional_structure']
         self.ctx.surface_area = generated_structures['surface_area'].value
 
@@ -366,7 +379,7 @@ class SurfaceEnergyWorkChain(
 
     def setup(self):
         self.ctx.iteration = 0
-        self.ctx.surface_results = []
+        self.ctx.results = {}
         kpoints_scf = self._get_kpoints_scf()
         self.ctx.kpoints_scf = kpoints_scf
 
@@ -418,12 +431,12 @@ class SurfaceEnergyWorkChain(
         if self.ctx.iteration >= self.ctx.number_of_spacings:
             return False
 
-        self.ctx.current_structure_key = self.ctx.structure_keys[self.ctx.iteration]
-        self.ctx.current_structure = self.ctx.generated_structures[self.ctx.current_structure_key]
-        current_metadata = self.ctx.structure_map[self.ctx.current_structure_key]
+        self.ctx.current_spacing_key = self.ctx.spacing_keys[self.ctx.iteration]
+        current_metadata = self.ctx.generated_structures[self.ctx.current_spacing_key]
+        self.ctx.current_structure = current_metadata['structure']
         self.ctx.current_spacing = float(current_metadata['vacuum_spacing'])
-        self.ctx.current_point_index = int(current_metadata['point_index'])
         self.ctx.current_structure_uuid = current_metadata['structure_uuid']
+        self.ctx.current_call_link_label = current_metadata['call_link_label']
         self.ctx.kpoints_surface_energy = self._calculate_kpoints_for_structure(
             self.ctx.current_structure,
             self.ctx.kpoints_scf,
@@ -438,14 +451,14 @@ class SurfaceEnergyWorkChain(
                 namespace=self._SURFACE_ENERGY_NAMESPACE
             )
         )
-        inputs.metadata.call_link_label = self.ctx.current_structure_key
+        inputs.metadata.call_link_label = self.ctx.current_call_link_label
         inputs.pw.structure = self.ctx.current_structure
         inputs.kpoints = self.ctx.kpoints_surface_energy 
 
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(
             f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure '
-            f'{self.ctx.iteration + 1}/{self.ctx.number_of_spacings} ({self.ctx.current_structure_key}).'
+            f'{self.ctx.iteration + 1}/{self.ctx.number_of_spacings} ({self.ctx.current_spacing_key}).'
         )
 
         return {f"workchain_surface_energy": running}
@@ -464,48 +477,14 @@ class SurfaceEnergyWorkChain(
             surface_multiplier,
         )
 
-        self.ctx.surface_results.append({
-            'iteration': self.ctx.iteration,
-            'structure_label': self.ctx.current_structure_key,
+        self.ctx.results[self.ctx.current_spacing_key] = {
             'structure_uuid': self.ctx.current_structure_uuid,
-            'point_index': self.ctx.current_point_index,
-            'vacuum_spacing': float(self.ctx.current_spacing),
-            'structure_formula': self.ctx.current_structure.get_formula(),
-            'surface_multiplier': surface_multiplier,
             'total_energy_ev': float(total_energy_slab),
             'surface_energy_j_m2': float(surface_energy_j_m2) if surface_energy_j_m2 is not None else None,
-            'workchain_pk': workchain.pk,
             'workchain_uuid': workchain.uuid,
-        })
+        }
         self.ctx.iteration += 1
 
     def results(self):
         """Output collected results."""
-        nested_results = {}
-
-        for surface_result in self.ctx.surface_results:
-            spacing_label = f"{surface_result['vacuum_spacing']:.6f}"
-            nested_results[spacing_label] = {
-                'iteration': surface_result['iteration'],
-                'structure_label': surface_result['structure_label'],
-                'structure_uuid': surface_result['structure_uuid'],
-                'point_index': surface_result['point_index'],
-                'vacuum_spacing': surface_result['vacuum_spacing'],
-                'structure_formula': surface_result['structure_formula'],
-                'surface_multiplier': surface_result['surface_multiplier'],
-                'total_energy_ev': surface_result['total_energy_ev'],
-                'surface_energy_j_m2': surface_result['surface_energy_j_m2'],
-                'workchain_pk': surface_result['workchain_pk'],
-                'workchain_uuid': surface_result['workchain_uuid'],
-            }
-
-        results = {
-            'results': nested_results,
-            'surface_area_angstrom2': float(self.ctx.surface_area),
-            'number_of_spacings': self.ctx.number_of_spacings,
-        }
-
-        if 'total_energy_conventional_geometry' in self.ctx:
-            results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
-
-        self.out('results', orm.Dict(dict=results).store())
+        self.out('results', orm.Dict(dict=self.ctx.results).store())

@@ -42,37 +42,20 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
     builder.pop('surface_energy', None)
 
     process = SurfaceEnergyWorkChain(builder)
-    process.ctx.surface_results = [
-        {
-            'iteration': 1,
-            'structure_label': 'slab_idx_001',
+    process.ctx.results = {
+        '0_500000': {
             'structure_uuid': 'slab-uuid-001',
-            'point_index': 1,
-            'vacuum_spacing': 0.5,
-            'structure_formula': 'Al4',
-            'surface_multiplier': 4,
             'total_energy_ev': -10.0,
             'surface_energy_j_m2': 0.12,
-            'workchain_pk': 101,
             'workchain_uuid': 'uuid-101',
         },
-        {
-            'iteration': 2,
-            'structure_label': 'slab_idx_002',
+        '1_000000': {
             'structure_uuid': 'slab-uuid-002',
-            'point_index': 2,
-            'vacuum_spacing': 1.0,
-            'structure_formula': 'Al4',
-            'surface_multiplier': 4,
             'total_energy_ev': -9.5,
             'surface_energy_j_m2': 0.18,
-            'workchain_pk': 102,
             'workchain_uuid': 'uuid-102',
         },
-    ]
-    process.ctx.surface_area = 7.5
-    process.ctx.number_of_spacings = 2
-    process.ctx.total_energy_conventional_geometry = -2.5
+    }
 
     captured_outputs = {}
 
@@ -87,22 +70,17 @@ def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clea
 
     results = captured_outputs['results'].get_dict()
 
-    assert results['surface_area_angstrom2'] == 7.5
-    assert results['number_of_spacings'] == 2
-    assert results['conventional_energy_ev'] == -2.5
-    assert results['results']['0.500000']['surface_energy_j_m2'] == pytest.approx(0.12)
-    assert results['results']['1.000000']['surface_energy_j_m2'] == pytest.approx(0.18)
-    assert results['results']['0.500000']['structure_label'] == 'slab_idx_001'
-    assert results['results']['1.000000']['point_index'] == 2
-    assert results['results']['0.500000']['workchain_pk'] == 101
-    assert results['results']['1.000000']['workchain_uuid'] == 'uuid-102'
+    assert results['0_500000']['surface_energy_j_m2'] == pytest.approx(0.12)
+    assert results['1_000000']['surface_energy_j_m2'] == pytest.approx(0.18)
+    assert results['0_500000']['structure_uuid'] == 'slab-uuid-001'
+    assert results['1_000000']['workchain_uuid'] == 'uuid-102'
 
 
-def test_surface_workchain_generate_structures_keeps_internal_structure_map_only(
+def test_surface_workchain_generate_structures_indexes_by_vacuum_spacing(
     aiida_profile_clean,
     aluminum_structure,
 ) -> None:
-    """Surface workflow should keep structure-generation metadata internal to the workchain."""
+    """Surface workflow should index generated slabs by vacuum spacing."""
     builder = SurfaceEnergyWorkChain.get_builder()
     builder.structure = aluminum_structure
     builder.cleavaged_structure_data = CleavagedStructureData(
@@ -126,8 +104,10 @@ def test_surface_workchain_generate_structures_keeps_internal_structure_map_only
     result = process.generate_structures()
 
     assert result is None
-    assert process.ctx.structure_map['slab_idx_001']['vacuum_spacing'] == pytest.approx(0.5)
-    assert process.ctx.structure_map['slab_idx_002']['vacuum_spacing'] == pytest.approx(1.0)
+    assert process.ctx.spacing_keys == ['0_500000', '1_000000']
+    assert process.ctx.generated_structures['0_500000']['vacuum_spacing'] == pytest.approx(0.5)
+    assert process.ctx.generated_structures['1_000000']['vacuum_spacing'] == pytest.approx(1.0)
+    assert 'structure_uuid' in process.ctx.generated_structures['0_500000']
     assert captured_outputs == {}
 
 
@@ -151,12 +131,11 @@ def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(
 
     process = SurfaceEnergyWorkChain(builder)
     process.ctx.iteration = 1
-    process.ctx.current_structure_key = 'slab_idx_001'
+    process.ctx.current_spacing_key = '0_500000'
     process.ctx.current_structure_uuid = aluminum_structure.uuid
-    process.ctx.current_point_index = 1
     process.ctx.current_spacing = 0.5
     process.ctx.current_structure = aluminum_structure
-    process.ctx.surface_results = []
+    process.ctx.results = {}
     process.ctx.workchain_surface_energy = SimpleNamespace(
         is_finished_ok=True,
         pk=101,
@@ -170,7 +149,8 @@ def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(
     result = process.inspect_surface_energy()
 
     assert result is None
-    assert process.ctx.surface_results[0]['structure_formula'] == aluminum_structure.get_formula()
+    assert process.ctx.results['0_500000']['structure_uuid'] == aluminum_structure.uuid
+    assert process.ctx.results['0_500000']['surface_energy_j_m2'] == pytest.approx(0.12)
 
 
 def test_gsfe_workchain_results_output_is_stored(aiida_profile_clean, aluminum_structure) -> None:
