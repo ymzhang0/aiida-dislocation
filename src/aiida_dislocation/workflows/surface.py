@@ -38,11 +38,6 @@ class SurfaceEnergyWorkChain(
     _RY2eV = 13.605693122990
     _eVA22Jm2 = 1.602176634E-19 * 1E+20
 
-    @staticmethod
-    def _get_spacing_key(vacuum_spacing: float) -> str:
-        """Return a Dict-safe key for a vacuum spacing."""
-        return f'{vacuum_spacing:.6f}'.replace('.', '_')
-
     @classmethod
     def define(cls, spec):
         super().define(spec)
@@ -441,7 +436,6 @@ class SurfaceEnergyWorkChain(
         current_entry = self.ctx.generated_structures[self.ctx.iteration]
         self.ctx.current_structure = current_entry['structure']
         self.ctx.current_spacing = float(current_entry['vacuum_spacing'])
-        self.ctx.current_spacing_key = self._get_spacing_key(self.ctx.current_spacing)
         self.ctx.current_call_link_label = current_entry['call_link_label']
         self.ctx.kpoints_surface_energy = self._calculate_kpoints_for_structure(
             self.ctx.current_structure,
@@ -464,7 +458,7 @@ class SurfaceEnergyWorkChain(
         running = self.submit(PwBaseWorkChain, **inputs)
         self.report(
             f'launching PwBaseWorkChain<{running.pk}> for cleavaged structure '
-            f'{self.ctx.iteration + 1}/{self.ctx.number_of_spacings} ({self.ctx.current_spacing_key}).'
+            f'{self.ctx.iteration + 1}/{self.ctx.number_of_spacings} ({self.ctx.current_call_link_label}).'
         )
 
         return {f"workchain_surface_energy": running}
@@ -483,7 +477,7 @@ class SurfaceEnergyWorkChain(
             surface_multiplier,
         )
 
-        self.ctx.results[self.ctx.current_spacing_key] = {
+        self.ctx.results[self.ctx.current_call_link_label] = {
             'vacuum_spacing': float(self.ctx.current_spacing),
             'structure_uuid': self.ctx.current_structure.uuid,
             'total_energy_ev': float(total_energy_slab),
