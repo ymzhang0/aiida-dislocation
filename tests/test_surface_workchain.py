@@ -412,9 +412,9 @@ def test_gsfe_workchain_results_output_is_stored(aiida_profile_clean, aluminum_s
     process.out = _capture_output  # type: ignore[method-assign]
     process.results()
 
-    assert 'gsfe_results' in captured_outputs
-    assert captured_outputs['gsfe_results'].is_stored
-    results = captured_outputs['gsfe_results'].get_dict()
+    assert 'results' in captured_outputs
+    assert captured_outputs['results'].is_stored
+    results = captured_outputs['results'].get_dict()
     assert results['surface_area_angstrom2'] == 7.5
     assert results['number_of_structures'] == 1
     assert results['conventional_energy_ev'] == -2.5

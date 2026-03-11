@@ -139,7 +139,7 @@ class GSFEWorkChain(
             }
         )
         spec.output(
-            'gsfe_results',
+            'results',
             valid_type=orm.Dict,
             required=False,
             help='Aggregated GSFE results for all evaluated faulted structures.',
@@ -528,7 +528,7 @@ class GSFEWorkChain(
         if 'total_energy_conventional_geometry' in self.ctx:
             results['conventional_energy_ev'] = float(self.ctx.total_energy_conventional_geometry)
 
-        self.out('gsfe_results', orm.Dict(dict=results).store())
+        self.out('results', orm.Dict(dict=results).store())
 
     def on_terminated(self) -> None:
         """Clean child calculation working directories if ``clean_workdir`` is enabled."""
