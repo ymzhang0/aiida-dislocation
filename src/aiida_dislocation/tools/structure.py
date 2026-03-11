@@ -479,45 +479,41 @@ def get_faulted_structure(
         new_cell[-1] *= (n_unit_cells)
 
         if isinstance(fault_config.burger_vectors, dict):
-            for direction_name, path_points in fault_config.burger_vectors.items():
-                # iterate over path points
-                for segment in path_points:
-                    burgers_vector_for_cell = numpy.zeros(3)
-                    faults = numpy.zeros((len(stacking_order_supercell), 3))
-                    structure = build_atoms_from_burger_vector_general(
-                        new_cell,
-                        deepcopy(zs),
-                        layers_dict,
-                        stacking_order_supercell,
-                        burgers_vector_for_cell,
-                        faults,
-                        print_info=print_info
-                    )
-                    structures_list.append({
-                        'structure': structure,
-                        'burger_vector': burgers_vector_for_cell.tolist(),
-                    })
-                    for interface, burgers_vector in segment:
-                        burgers_vector_step = numpy.array(burgers_vector) / nsteps
-                        for _ in range(1, 1+nsteps):
-                            # Global progress t in [0, 1]
-                            # print(faults)
-                            faults = update_faults(faults, interface, burgers_vector_step)
-                            burgers_vector_for_cell += burgers_vector_step
-                            structure = build_atoms_from_burger_vector_general(
-                                new_cell,
-                                deepcopy(zs),
-                                layers_dict,
-                                stacking_order_supercell,
-                                burgers_vector_for_cell,
-                                faults,
-                                print_info=print_info
-                            )
-                            
-                            structures_list.append({
-                                'structure': structure,
-                                'burger_vector': burgers_vector_for_cell.tolist(),
-                            })
+            for _direction_name, segment in fault_config.burger_vectors.items():
+                burgers_vector_for_cell = numpy.zeros(3)
+                faults = numpy.zeros((len(stacking_order_supercell), 3))
+                structure = build_atoms_from_burger_vector_general(
+                    new_cell,
+                    deepcopy(zs),
+                    layers_dict,
+                    stacking_order_supercell,
+                    burgers_vector_for_cell,
+                    faults,
+                    print_info=print_info
+                )
+                structures_list.append({
+                    'structure': structure,
+                    'burger_vector': burgers_vector_for_cell.tolist(),
+                })
+                for interface, burgers_vector in segment:
+                    burgers_vector_step = numpy.array(burgers_vector) / nsteps
+                    for _ in range(1, 1+nsteps):
+                        faults = update_faults(faults, interface, burgers_vector_step)
+                        burgers_vector_for_cell += burgers_vector_step
+                        structure = build_atoms_from_burger_vector_general(
+                            new_cell,
+                            deepcopy(zs),
+                            layers_dict,
+                            stacking_order_supercell,
+                            burgers_vector_for_cell,
+                            faults,
+                            print_info=print_info
+                        )
+                        
+                        structures_list.append({
+                            'structure': structure,
+                            'burger_vector': burgers_vector_for_cell.tolist(),
+                        })
 
         else:
              # Legacy or unhandled format - skipping as per new requirement

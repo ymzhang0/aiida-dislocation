@@ -88,7 +88,6 @@ def generate_faulted_structures(
 
     outputs: dict[str, orm.Data] = {
         'conventional_structure': orm.StructureData(ase=builder.get_conventional_structure()),
-        'cleavaged_structure': orm.StructureData(ase=builder.get_cleavaged_structure()),
         'surface_area': orm.Float(float(builder.surface_area)),
     }
 

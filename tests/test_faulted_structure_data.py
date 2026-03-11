@@ -10,9 +10,10 @@ from ase import Atoms
 from ase.build import bulk
 
 from aiida_dislocation.calculations import generate_faulted_structures
+from aiida_dislocation.data.cleavaged_structure import CleavagedStructure, PlanarStructure
 from aiida_dislocation.data.faulted_structure import FaultedStructureData
+from aiida_dislocation.data.gliding_systems import get_gliding_system
 from aiida_dislocation.tools.structure import (
-    get_cleavaged_structure,
     get_conventional_structure,
     get_faulted_structure,
 )
@@ -54,6 +55,27 @@ def test_faulted_structure_data_is_immutable_after_store(aiida_profile_clean) ->
         node.base.attributes.set(FaultedStructureData.N_UNIT_CELLS_KEY, 5)
 
 
+def test_faulted_structure_helper_uses_shared_base_not_surface_helper() -> None:
+    """Faulted and cleavaged helpers should share a base instead of inheriting from each other."""
+    faulted_helper = FaultedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+    ).get_structure_builder(bulk('Al', 'fcc', a=4.05))
+
+    assert isinstance(faulted_helper, PlanarStructure)
+    assert not isinstance(faulted_helper, CleavagedStructure)
+
+
+def test_gliding_system_general_fault_paths_use_single_tuple_layer() -> None:
+    """Generalized fault definitions should store a single tuple of steps per direction."""
+    gliding_system = get_gliding_system('C1_b')
+    direction_steps = gliding_system.get_plane('011').general.burger_vectors['100']
+
+    assert direction_steps == ((2, [1, 0, 0]),)
+    assert isinstance(direction_steps[0][0], int)
+    assert isinstance(direction_steps[0][1], list)
+
+
 def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_profile_clean, aluminum_fcc) -> None:
     """The calcfunction outputs should keep the same cells and atomic positions as the legacy path."""
     structure = orm.StructureData(ase=aluminum_fcc)
@@ -67,11 +89,6 @@ def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_pro
     )
 
     _, legacy_conventional = get_conventional_structure(aluminum_fcc, gliding_plane='111')
-    _, legacy_cleavaged = get_cleavaged_structure(
-        legacy_conventional,
-        gliding_plane='111',
-        n_unit_cells=4,
-    )
     _, legacy_faulted = get_faulted_structure(
         legacy_conventional,
         fault_mode='general',
@@ -88,9 +105,9 @@ def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_pro
     }
 
     _assert_atoms_match(generated['conventional_structure'].get_ase(), legacy_conventional)
-    _assert_atoms_match(generated['cleavaged_structure'].get_ase(), legacy_cleavaged)
     assert len(generated_structures) == len(legacy_entries)
     assert 'structure_map' not in generated
+    assert 'cleavaged_structure' not in generated
 
     for index, legacy_entry in enumerate(legacy_entries, start=1):
         key = f'sfe_idx_{index:03d}'

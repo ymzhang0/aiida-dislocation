@@ -19,8 +19,8 @@ from aiida_dislocation.tools.structure_builder import build_atoms_surface
 from aiida_dislocation.tools.structure_utils import get_strukturbericht, group_by_layers
 
 
-class CleavagedStructure:
-    """Helper for conventional and cleavaged structure generation."""
+class PlanarStructure:
+    """Shared helper for conventional cell operations on a selected gliding plane."""
 
     def __init__(
         self,
@@ -111,6 +111,9 @@ class CleavagedStructure:
             P = numpy.array(P)
 
         return make_supercell(self.unit_cell, P)
+
+class CleavagedStructure(PlanarStructure):
+    """Helper for conventional and cleavaged structure generation."""
 
     def get_cleavaged_structure(
         self,

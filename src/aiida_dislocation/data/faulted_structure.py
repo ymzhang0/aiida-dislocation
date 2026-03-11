@@ -9,7 +9,7 @@ from aiida.orm import Data
 from ase import Atoms
 
 from aiida_dislocation.tools.structure_utils import group_by_layers
-from aiida_dislocation.data.cleavaged_structure import CleavagedStructure
+from aiida_dislocation.data.cleavaged_structure import PlanarStructure
 from aiida_dislocation.data.gliding_systems import (
     FaultConfig,
 )
@@ -37,7 +37,7 @@ GeneralFaultStructureResult = list[GeneralFaultStructurePoint]
 FaultedStructureResult = ty.Union[Atoms, list[dict[str, ty.Any]], GeneralFaultStructureResult]
 
 
-class FaultedStructure(CleavagedStructure):
+class FaultedStructure(PlanarStructure):
     """
     A class to handle dislocation structures and their manipulations using ASE Atoms.
     """
@@ -122,42 +122,42 @@ class FaultedStructure(CleavagedStructure):
             new_cell[-1] *= self.n_unit_cells
 
             if isinstance(fault_config.burger_vectors, dict):
-                for direction_name, path_points in fault_config.burger_vectors.items():
-                    for path_index, segment in enumerate(path_points):
-                        burgers_vector_for_cell = numpy.zeros(3)
-                        faults = numpy.zeros((len(stacking_order_supercell), 3))
-                        step_index = 0
+                for direction_name, segment in fault_config.burger_vectors.items():
+                    burgers_vector_for_cell = numpy.zeros(3)
+                    faults = numpy.zeros((len(stacking_order_supercell), 3))
+                    path_index = 0
+                    step_index = 0
 
-                        # Initial state (0 displacement)
-                        structure = build_atoms_from_burger_vector_general(
-                            new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
-                            burgers_vector_for_cell, faults, print_info=print_info
-                        )
-                        structures_list.append({
-                            'structure': structure,
-                            'burger_vector': burgers_vector_for_cell.tolist(),
-                            'direction_name': direction_name,
-                            'path_index': path_index,
-                            'step_index': step_index,
-                        })
+                    # Initial state (0 displacement)
+                    structure = build_atoms_from_burger_vector_general(
+                        new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
+                        burgers_vector_for_cell, faults, print_info=print_info
+                    )
+                    structures_list.append({
+                        'structure': structure,
+                        'burger_vector': burgers_vector_for_cell.tolist(),
+                        'direction_name': direction_name,
+                        'path_index': path_index,
+                        'step_index': step_index,
+                    })
 
-                        for interface, burgers_vector in segment:
-                            burgers_vector_step = numpy.array(burgers_vector) / nsteps
-                            for _ in range(1, 1+nsteps):
-                                step_index += 1
-                                faults = update_faults(faults, interface, burgers_vector_step)
-                                burgers_vector_for_cell += burgers_vector_step
-                                structure = build_atoms_from_burger_vector_general(
-                                    new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
-                                    burgers_vector_for_cell, faults, print_info=print_info
-                                )
-                                structures_list.append({
-                                    'structure': structure,
-                                    'burger_vector': burgers_vector_for_cell.tolist(),
-                                    'direction_name': direction_name,
-                                    'path_index': path_index,
-                                    'step_index': step_index,
-                                })
+                    for interface, burgers_vector in segment:
+                        burgers_vector_step = numpy.array(burgers_vector) / nsteps
+                        for _ in range(1, 1+nsteps):
+                            step_index += 1
+                            faults = update_faults(faults, interface, burgers_vector_step)
+                            burgers_vector_for_cell += burgers_vector_step
+                            structure = build_atoms_from_burger_vector_general(
+                                new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
+                                burgers_vector_for_cell, faults, print_info=print_info
+                            )
+                            structures_list.append({
+                                'structure': structure,
+                                'burger_vector': burgers_vector_for_cell.tolist(),
+                                'direction_name': direction_name,
+                                'path_index': path_index,
+                                'step_index': step_index,
+                            })
                                 
             faulted_result = structures_list
             

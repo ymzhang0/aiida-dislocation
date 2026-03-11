@@ -2,11 +2,17 @@ import typing as ty
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 
+GeneralFaultStep = tuple[int, list[float]]
+GeneralFaultPath = tuple[GeneralFaultStep, ...]
+GeneralFaultDirections = dict[str, GeneralFaultPath]
+BurgerVectorConfig = ty.Union[list[list[float]], GeneralFaultDirections]
+
+
 @dataclass
 class FaultConfig:
     """Configuration for a fault type (intrinsic, unstable, or extrinsic)."""
     removal_layers: ty.Union[list[int], int] = None
-    burger_vectors: ty.Optional[list[list[float]]] = None
+    burger_vectors: ty.Optional[BurgerVectorConfig] = None
     periodicity: bool = False
     possible: bool = True
     interface: int = 0
@@ -65,10 +71,8 @@ class A1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        )
+                        (2, [1, 0, 0]),
+                    )
                     },
                 # interface=(2, ),
                 nsteps = 10
@@ -84,10 +88,8 @@ class A1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '010': (
-                        (
-                            (2, [0, 1, 0]),
-                        ),
-                        )
+                        (2, [0, 1, 0]),
+                    )
                     },
                 # interface=(2, ),
                 nsteps = 10
@@ -114,10 +116,8 @@ class A1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (3, [1/3, 1/3, 0]),
-                            (4, [1/3, 1/3, 0])
-                        ),
+                        (3, [1/3, 1/3, 0]),
+                        (4, [1/3, 1/3, 0]),
                     ),
                 },
                 interface=(3, 4),
@@ -142,10 +142,8 @@ class A2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        )
+                        (2, [1, 0, 0]),
+                    )
                     },
                 # interface=[2, ],
                 nsteps = 10
@@ -165,10 +163,8 @@ class A2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        )
+                        (2, [1, 0, 0]),
+                    )
                     },
                 # interface=[2,],
                 nsteps = 10
@@ -192,11 +188,9 @@ class A2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                             (3, [1/3, 1/3, 0]),
-                            (4, [1/3, 1/3, 0])
-                            )
-                        )
+                        (3, [1/3, 1/3, 0]),
+                        (4, [1/3, 1/3, 0]),
+                    )
                     },
                 # interface=(3, 4),
                 nsteps = 8
@@ -214,10 +208,8 @@ class B1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        )
+                        (2, [1, 0, 0]),
+                    )
                     },
                 # interface=[2, ],
                 nsteps = 10
@@ -230,15 +222,11 @@ class B1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        ),
+                        (2, [1, 0, 0]),
+                    ),
                     '010': (
-                        (
-                            (2, [0, 1, 0]),
-                        ),
-                        )
+                        (2, [0, 1, 0]),
+                    )
                     },
                 interface=[2, ],
                 nsteps = 8
@@ -257,11 +245,9 @@ class B1GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (6, [1/3, 1/3, 0]),
-                            (7, [1/3, 1/3, 0])
-                            ),
-                        )
+                        (6, [1/3, 1/3, 0]),
+                        (7, [1/3, 1/3, 0]),
+                    )
                     },
                 # interface=(6, ),
                 nsteps = 10
@@ -280,10 +266,8 @@ class B2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        )
+                        (2, [1, 0, 0]),
+                    )
                     },
                 # interface=[2, ],
                 nsteps = 10
@@ -296,20 +280,14 @@ class B2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                        ),
-                        ),
+                        (2, [1, 0, 0]),
+                    ),
                     '010': (
-                        (
-                            (2, [0, 1, 0]),
-                        ),
-                        ),
+                        (2, [0, 1, 0]),
+                    ),
                     '110': (
-                        (
-                            (2, [1, 1, 0]),
-                        ),
-                        ),
+                        (2, [1, 1, 0]),
+                    ),
                     },
                 # interface=[2, ],
                 nsteps = 6
@@ -328,10 +306,8 @@ class B2GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (6, [1/3, 1/3, 0]),
-                            ),
-                        )
+                        (6, [1/3, 1/3, 0]),
+                    )
                     },
                 # interface=(6, ),
                 nsteps = 10
@@ -355,10 +331,8 @@ class C1bGlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (4, [1, 1, 0]),
-                            ),
-                        )
+                        (4, [1, 1, 0]),
+                    )
                     },
                 # interface=(4, 4),
                 nsteps = 8
@@ -377,20 +351,14 @@ class C1bGlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                            ),
-                        ),
+                        (2, [1, 0, 0]),
+                    ),
                     '010': (
-                        (
-                            (2, [0, 1, 0]),
-                            ),
-                        ),
+                        (2, [0, 1, 0]),
+                    ),
                     '210': (
-                        (
-                            (2, [2, 1, 0]),
-                            ),
-                        )
+                        (2, [2, 1, 0]),
+                    )
                     },
                 # interface=(2, 2),
                 nsteps = 6
@@ -410,10 +378,8 @@ class C1bGlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (9, [1/3, 1/3, 0]),
-                            ),
-                        )
+                        (9, [1/3, 1/3, 0]),
+                    )
                     },
                 # interface=9,
                 nsteps = 10
@@ -438,10 +404,8 @@ class L21GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (4, [1, 1, 0]),
-                            ),
-                        )
+                        (4, [1, 1, 0]),
+                    )
                     },
                 # interface=(4,),
                 nsteps = 8
@@ -460,20 +424,14 @@ class L21GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (
-                            (2, [1, 0, 0]),
-                            ),
-                        ),
+                        (2, [1, 0, 0]),
+                    ),
                     '010': (
-                        (
-                            (2, [0, 1, 0]),
-                            ),
-                        ),
+                        (2, [0, 1, 0]),
+                    ),
                     '210': (
-                        (
-                            (2, [2, 1, 0]),
-                            ),
-                        )
+                        (2, [2, 1, 0]),
+                    )
                     },
                 # interface=(2, ),
                 nsteps = 6
@@ -493,10 +451,8 @@ class L21GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (
-                            (9, [1/3, 1/3, 0]),
-                            ),
-                        )
+                        (9, [1/3, 1/3, 0]),
+                    )
                     },
                 # interface=9,
                 nsteps = 10
