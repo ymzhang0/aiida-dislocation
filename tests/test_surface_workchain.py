@@ -9,6 +9,7 @@ from aiida import orm
 from ase.build import bulk
 
 from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
+from aiida_dislocation.data.faulted_structure import FaultedStructureData
 from aiida_dislocation.workflows.gsfe import GSFEWorkChain
 from aiida_dislocation.workflows.surface import SurfaceEnergyWorkChain
 
@@ -24,6 +25,40 @@ def test_gsfe_workchain_no_longer_exposes_surface_energy_namespace() -> None:
     builder = GSFEWorkChain.get_builder()
 
     assert 'surface_energy' not in builder
+
+
+def test_gsfe_workchain_generate_structures_indexes_faulted_outputs(
+    aiida_profile_clean,
+    aluminum_structure,
+) -> None:
+    """GSFE workflow should build faulted-structure entries from direct calcfunction outputs."""
+    builder = GSFEWorkChain.get_builder()
+    builder.structure = aluminum_structure
+    builder.faulted_structure_data = FaultedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+    )
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.clean_workdir = orm.Bool(False)
+    builder.pop('relax', None)
+    builder.pop('scf', None)
+    builder.pop('sfe', None)
+
+    process = GSFEWorkChain(builder)
+    captured_outputs = {}
+
+    def _capture_output(label: str, node: orm.Data) -> None:
+        captured_outputs[label] = node
+
+    process.out = _capture_output  # type: ignore[method-assign]
+    result = process.generate_structures()
+
+    assert result is None
+    assert process.ctx.number_of_structures > 0
+    assert process.ctx.generated_structures[0]['structure_key'] == 'sfe_idx_001'
+    assert process.ctx.generated_structures[0]['direction_name']
+    assert isinstance(process.ctx.generated_structures[0]['burger_vector'], list)
+    assert captured_outputs == {}
 
 
 def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clean, aluminum_structure) -> None:

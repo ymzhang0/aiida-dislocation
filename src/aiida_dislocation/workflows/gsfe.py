@@ -143,18 +143,6 @@ class GSFEWorkChain(
             required=False,
             help='Aggregated GSFE results for all evaluated faulted structures.',
         )
-        spec.output(
-            'faulted_structure_data',
-            valid_type=FaultedStructureData,
-            required=False,
-            help='The faulted-structure configuration used for GSFE generation.',
-        )
-        spec.output(
-            'structure_map',
-            valid_type=orm.Dict,
-            required=False,
-            help='Mapping between generated structure labels and their displacement metadata.',
-        )
         
         spec.exit_code(
             401,
@@ -313,22 +301,55 @@ class GSFEWorkChain(
             self.report(f'Failed to generate GSFE structures: {exception}')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        structure_map_node = generated_structures['structure_map']
-        structure_map = structure_map_node.get_dict()
-        structure_keys = sorted(structure_map.keys())
+        generated_entries: dict[str, dict[str, ty.Any]] = {}
 
-        if not structure_keys:
+        for output_label, output_node in generated_structures.items():
+            if output_label.startswith('sfe_idx_'):
+                generated_entries.setdefault(output_label, {})['structure'] = output_node
+                continue
+
+            if output_label.startswith('burger_vector_sfe_idx_'):
+                structure_key = output_label.removeprefix('burger_vector_')
+                generated_entries.setdefault(structure_key, {})['burger_vector'] = output_node.get_list()
+                continue
+
+            if output_label.startswith('direction_name_sfe_idx_'):
+                structure_key = output_label.removeprefix('direction_name_')
+                generated_entries.setdefault(structure_key, {})['direction_name'] = output_node.value
+                continue
+
+            if output_label.startswith('path_index_sfe_idx_'):
+                structure_key = output_label.removeprefix('path_index_')
+                generated_entries.setdefault(structure_key, {})['path_index'] = output_node.value
+                continue
+
+            if output_label.startswith('step_index_sfe_idx_'):
+                structure_key = output_label.removeprefix('step_index_')
+                generated_entries.setdefault(structure_key, {})['step_index'] = output_node.value
+
+        self.ctx.generated_structures = []
+        for structure_key, generated_entry in sorted(generated_entries.items()):
+            if not all(
+                field in generated_entry
+                for field in ('structure', 'burger_vector', 'direction_name', 'path_index', 'step_index')
+            ):
+                self.report(f'Incomplete faulted-structure entry generated for `{structure_key}`.')
+                return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
+
+            self.ctx.generated_structures.append({
+                'structure_key': structure_key,
+                'structure': generated_entry['structure'],
+                'burger_vector': generated_entry['burger_vector'],
+                'direction_name': generated_entry['direction_name'],
+                'path_index': generated_entry['path_index'],
+                'step_index': generated_entry['step_index'],
+            })
+
+        if not self.ctx.generated_structures:
             self.report('No generalized fault path is available for the selected structure and gliding plane.')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        self.ctx.faulted_structure_data = self.inputs.faulted_structure_data
-        self.ctx.generated_structures = {
-            key: value for key, value in generated_structures.items() if key.startswith('sfe_idx_')
-        }
-        self.ctx.structure_map_node = structure_map_node
-        self.ctx.structure_map = structure_map
-        self.ctx.structure_keys = structure_keys
-        self.ctx.number_of_structures = len(structure_keys)
+        self.ctx.number_of_structures = len(self.ctx.generated_structures)
         self.ctx.conventional_structure = generated_structures['conventional_structure']
         self.ctx.surface_area = generated_structures['surface_area'].value
         
@@ -336,9 +357,6 @@ class GSFEWorkChain(
 
         self.ctx.unit_cell_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
         self.ctx.conventional_multiplier = self._calculate_structure_multiplier(self.ctx.conventional_structure)
-
-        self.out('faulted_structure_data', self.inputs.faulted_structure_data)
-        self.out('structure_map', structure_map_node)
 
     def _get_kpoints_scf(self) -> orm.KpointsData:
         """Get or create kpoints_scf. Returns kpoints_scf KpointsData object."""
@@ -412,15 +430,14 @@ class GSFEWorkChain(
         if self.ctx.iteration >= self.ctx.number_of_structures:
             return False
 
-        self.ctx.current_structure_key = self.ctx.structure_keys[self.ctx.iteration]
-        self.ctx.current_structure = self.ctx.generated_structures[self.ctx.current_structure_key]
-        current_metadata = self.ctx.structure_map[self.ctx.current_structure_key]
-        self.ctx.current_slipping_vector = current_metadata['burger_vector']
-        self.ctx.current_direction_name = current_metadata['direction_name']
-        self.ctx.current_path_index = current_metadata['path_index']
-        self.ctx.current_step_index = current_metadata['step_index']
-        self.ctx.current_point_index = current_metadata['point_index']
-        self.ctx.current_structure_uuid = current_metadata['structure_uuid']
+        current_entry = self.ctx.generated_structures[self.ctx.iteration]
+        self.ctx.current_structure_key = current_entry['structure_key']
+        self.ctx.current_structure = current_entry['structure']
+        self.ctx.current_slipping_vector = current_entry['burger_vector']
+        self.ctx.current_direction_name = current_entry['direction_name']
+        self.ctx.current_path_index = current_entry['path_index']
+        self.ctx.current_step_index = current_entry['step_index']
+        self.ctx.current_point_index = self.ctx.iteration + 1
         self.ctx.current_direction_label = f"{self.ctx.current_direction_name}_path_{self.ctx.current_path_index:03d}"
         self.ctx.current_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
         self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
@@ -470,7 +487,7 @@ class GSFEWorkChain(
 
         self.ctx.sfe_results.append({
             'structure_label': self.ctx.current_structure_key,
-            'structure_uuid': self.ctx.current_structure_uuid,
+            'structure_uuid': self.ctx.current_structure.uuid,
             'iteration': self.ctx.iteration,
             'point_index': self.ctx.current_point_index,
             'direction_label': self.ctx.current_direction_label,

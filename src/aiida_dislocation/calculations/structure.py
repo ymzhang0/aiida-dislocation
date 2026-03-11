@@ -12,17 +12,6 @@ from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 from aiida_dislocation.data.faulted_structure import FaultedStructureData, GeneralFaultStructurePoint
 
 
-class FaultedStructureMetadata(ty.TypedDict):
-    """Metadata stored for each generated faulted structure."""
-
-    point_index: int
-    structure_uuid: str
-    direction_name: str
-    path_index: int
-    step_index: int
-    burger_vector: list[float]
-
-
 def _normalize_faulted_structure_points(
     generated: ty.Any,
     fault_type: str,
@@ -74,6 +63,11 @@ def _format_spacing_key(vacuum_spacing: float) -> str:
     return f'{vacuum_spacing:.6f}'.replace('.', '_')
 
 
+def _format_fault_key(index: int) -> str:
+    """Return the standard output key for a generated faulted structure."""
+    return f'sfe_idx_{index:03d}'
+
+
 @calcfunction
 def generate_faulted_structures(
     structure: orm.StructureData,
@@ -92,28 +86,20 @@ def generate_faulted_structures(
     if not normalized_points:
         raise ValueError('No faulted structures could be generated for the requested configuration.')
 
-    metadata: dict[str, FaultedStructureMetadata] = {}
     outputs: dict[str, orm.Data] = {
-        'structure_map': orm.Dict(dict={}),
         'conventional_structure': orm.StructureData(ase=builder.get_conventional_structure()),
         'cleavaged_structure': orm.StructureData(ase=builder.get_cleavaged_structure()),
         'surface_area': orm.Float(float(builder.surface_area)),
     }
 
     for index, point in enumerate(normalized_points, start=1):
-        key = f'sfe_idx_{index:03d}'
-        structure_node = orm.StructureData(ase=point['structure'])
-        outputs[key] = structure_node
-        metadata[key] = {
-            'point_index': index,
-            'structure_uuid': structure_node.uuid,
-            'direction_name': point['direction_name'],
-            'path_index': point['path_index'],
-            'step_index': point['step_index'],
-            'burger_vector': [float(value) for value in point['burger_vector']],
-        }
+        key = _format_fault_key(index)
+        outputs[key] = orm.StructureData(ase=point['structure'])
+        outputs[f'burger_vector_{key}'] = orm.List(list=[float(value) for value in point['burger_vector']])
+        outputs[f'direction_name_{key}'] = orm.Str(point['direction_name'])
+        outputs[f'path_index_{key}'] = orm.Int(int(point['path_index']))
+        outputs[f'step_index_{key}'] = orm.Int(int(point['step_index']))
 
-    outputs['structure_map'] = orm.Dict(dict=metadata)
     return outputs
 
 

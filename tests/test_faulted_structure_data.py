@@ -83,24 +83,26 @@ def test_generate_faulted_structures_matches_legacy_general_fault_path(aiida_pro
     assert legacy_faulted is not None
 
     legacy_entries = legacy_faulted['structures']
-    structure_map = generated['structure_map'].get_dict()
+    generated_structures = {
+        label: node for label, node in generated.items() if label.startswith('sfe_idx_')
+    }
 
     _assert_atoms_match(generated['conventional_structure'].get_ase(), legacy_conventional)
     _assert_atoms_match(generated['cleavaged_structure'].get_ase(), legacy_cleavaged)
-    assert len(structure_map) == len(legacy_entries)
+    assert len(generated_structures) == len(legacy_entries)
+    assert 'structure_map' not in generated
 
     for index, legacy_entry in enumerate(legacy_entries, start=1):
         key = f'sfe_idx_{index:03d}'
         assert key in generated
-        assert key in structure_map
 
         generated_structure = generated[key].get_ase()
         _assert_atoms_match(generated_structure, legacy_entry['structure'])
-
-        metadata = structure_map[key]
-        assert metadata['point_index'] == index
-        assert metadata['structure_uuid'] == generated[key].uuid
-        npt.assert_allclose(metadata['burger_vector'], legacy_entry['burger_vector'], atol=1.0e-12)
+        npt.assert_allclose(
+            generated[f'burger_vector_{key}'].get_list(),
+            legacy_entry['burger_vector'],
+            atol=1.0e-12,
+        )
 
 
 def test_generate_faulted_structures_preserves_general_fault_metadata(aiida_profile_clean, aluminum_fcc) -> None:
@@ -120,19 +122,19 @@ def test_generate_faulted_structures_preserves_general_fault_metadata(aiida_prof
         fault_mode=orm.Str('general'),
         fault_type=orm.Str('general'),
     )
-    structure_map = generated['structure_map'].get_dict()
 
-    assert len(expected_points) == len(structure_map)
+    assert len(expected_points) == len([label for label in generated if label.startswith('sfe_idx_')])
 
     for index, expected_point in enumerate(expected_points, start=1):
         key = f'sfe_idx_{index:03d}'
-        metadata = structure_map[key]
-
-        assert metadata['point_index'] == index
-        assert metadata['direction_name'] == expected_point['direction_name']
-        assert metadata['path_index'] == expected_point['path_index']
-        assert metadata['step_index'] == expected_point['step_index']
-        npt.assert_allclose(metadata['burger_vector'], expected_point['burger_vector'], atol=1.0e-12)
+        assert generated[f'direction_name_{key}'].value == expected_point['direction_name']
+        assert generated[f'path_index_{key}'].value == expected_point['path_index']
+        assert generated[f'step_index_{key}'].value == expected_point['step_index']
+        npt.assert_allclose(
+            generated[f'burger_vector_{key}'].get_list(),
+            expected_point['burger_vector'],
+            atol=1.0e-12,
+        )
         _assert_atoms_match(generated[key].get_ase(), expected_point['structure'])
 
 
