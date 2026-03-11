@@ -233,7 +233,7 @@ def clean_calcjob_remote(node: orm.CalcJobNode) -> bool:
     try:
         node.outputs.remote_folder._clean()  # noqa: SLF001
         cleaned = True
-    except (OSError, KeyError):
+    except (OSError, KeyError, RuntimeError):
         pass
 
     return cleaned

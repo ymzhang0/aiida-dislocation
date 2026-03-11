@@ -99,6 +99,46 @@ def test_workchain_on_terminated_cleans_remote_folders(
 
 
 @pytest.mark.parametrize('workchain_class', [GSFEWorkChain, SurfaceEnergyWorkChain])
+def test_workchain_on_terminated_ignores_runtime_cleanup_failures(
+    aiida_profile_clean,
+    aluminum_structure,
+    monkeypatch: pytest.MonkeyPatch,
+    workchain_class,
+) -> None:
+    """Cleanup failures caused by transport runtime errors should not break termination."""
+    cleaned_calls: list[int] = []
+    report_messages: list[str] = []
+
+    class FakeRemoteFolder:
+        def __init__(self, pk: int, should_raise: bool = False) -> None:
+            self.pk = pk
+            self.should_raise = should_raise
+
+        def _clean(self) -> None:
+            if self.should_raise:
+                raise RuntimeError('no greenback portal is available')
+            cleaned_calls.append(self.pk)
+
+    class FakeCalcJobNode:
+        def __init__(self, pk: int, should_raise: bool = False) -> None:
+            self.pk = pk
+            self.outputs = SimpleNamespace(remote_folder=FakeRemoteFolder(pk, should_raise=should_raise))
+
+    process = _build_process_for_cleanup_test(workchain_class, aluminum_structure, clean_workdir=True)
+    descendants = [FakeCalcJobNode(31, should_raise=True), FakeCalcJobNode(32)]
+
+    monkeypatch.setattr(WorkChain, 'on_terminated', lambda self: None)
+    monkeypatch.setattr(mixins.orm, 'CalcJobNode', FakeCalcJobNode)
+    monkeypatch.setattr(type(process.node), 'called_descendants', property(lambda _: descendants))
+    process.report = report_messages.append  # type: ignore[method-assign]
+
+    process.on_terminated()
+
+    assert cleaned_calls == [32]
+    assert any('cleaned remote folders of calculations: 32' in message for message in report_messages)
+
+
+@pytest.mark.parametrize('workchain_class', [GSFEWorkChain, SurfaceEnergyWorkChain])
 def test_workchain_on_terminated_respects_clean_workdir_false(
     aiida_profile_clean,
     aluminum_structure,
