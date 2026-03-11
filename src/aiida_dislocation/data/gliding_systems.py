@@ -440,7 +440,7 @@ class L21GlidingSystem(GlidingSystem):
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
             transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
-            n_layers=9,
+            n_layers=12,
             intrinsic=FaultConfig(
                 removal_layers=[9, 10, 11, 12, 13, 14],
                 burger_vectors=[[1/3, 1/3, 0]],

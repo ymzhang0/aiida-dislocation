@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from aiida import orm
+from aiida.common import AttributeDict
 from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
 from aiida_quantumespresso.workflows.pw.relax import PwRelaxWorkChain
 from ase.build import bulk
@@ -14,9 +15,39 @@ from aiida_dislocation.workflows.surface import SurfaceEnergyWorkChain
 from aiida_dislocation.workflows.usfe import USFEWorkChain
 
 
+def _make_mock_pw_relax_builder() -> AttributeDict:
+    """Return a minimal mapping-shaped builder matching repository relax namespaces."""
+    base_namespace = AttributeDict({
+        'metadata': AttributeDict(),
+        'pw': AttributeDict({
+            'metadata': AttributeDict({
+                'options': AttributeDict({'stash': AttributeDict()}),
+            }),
+            'monitors': AttributeDict(),
+            'pseudos': AttributeDict(),
+        }),
+    })
+    builder = AttributeDict({
+        'metadata': AttributeDict(),
+        'base_relax': base_namespace,
+        'base_init_relax': AttributeDict({
+            'metadata': AttributeDict(),
+            'pw': AttributeDict({
+                'metadata': AttributeDict({
+                    'options': AttributeDict({'stash': AttributeDict()}),
+                }),
+                'monitors': AttributeDict(),
+                'pseudos': AttributeDict(),
+            }),
+        }),
+    })
+    builder._data = builder
+    return builder
+
+
 def _mock_pw_relax_builder_from_protocol(cls, *args, **kwargs):
-    """Return a minimal ``PwRelaxWorkChain`` builder using the new namespaces."""
-    return PwRelaxWorkChain.get_builder()
+    """Return a minimal ``PwRelaxWorkChain`` builder using the repository namespaces."""
+    return _make_mock_pw_relax_builder()
 
 
 def _mock_pw_base_builder_from_protocol(cls, *args, **kwargs):
@@ -71,7 +102,7 @@ def test_gsfe_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_structu
 
     def _capture_pw_relax_builder(cls, *args, **kwargs):
         captured_overrides.update(kwargs.get('overrides', {}))
-        return PwRelaxWorkChain.get_builder()
+        return _make_mock_pw_relax_builder()
 
     monkeypatch.setattr(
         PwRelaxWorkChain,
@@ -121,7 +152,7 @@ def test_surface_builder_uses_new_pw_relax_namespaces(monkeypatch, aluminum_stru
 
     def _capture_pw_relax_builder(cls, *args, **kwargs):
         captured_overrides.update(kwargs.get('overrides', {}))
-        return PwRelaxWorkChain.get_builder()
+        return _make_mock_pw_relax_builder()
 
     monkeypatch.setattr(
         PwRelaxWorkChain,

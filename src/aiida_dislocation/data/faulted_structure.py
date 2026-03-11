@@ -24,16 +24,36 @@ from aiida_dislocation.tools.structure_builder import (
 
 
 class GeneralFaultStructurePoint(ty.TypedDict):
-    """Single point on a generalized stacking fault path."""
+    """Flattened generalized stacking fault point used for calcfunction normalization."""
 
+    label: str
     structure: Atoms
     burger_vector: list[float]
+    total_cell_shift: list[float]
+    interface_slips: dict[int, list[float]]
     direction_name: str
-    path_index: int
     step_index: int
 
 
-GeneralFaultStructureResult = list[GeneralFaultStructurePoint]
+class GeneralFaultStructureMetadata(ty.TypedDict):
+    """Metadata snapshot for a generalized stacking fault state."""
+
+    label: str
+    direction_name: str
+    step_index: int
+    burger_vector: list[float]
+    total_cell_shift: list[float]
+    interface_slips: dict[int, list[float]]
+
+
+class GeneralFaultStructureEntry(ty.TypedDict):
+    """Generalized stacking fault structure and its metadata snapshot."""
+
+    structure: Atoms
+    metadata: GeneralFaultStructureMetadata
+
+
+GeneralFaultStructureResult = dict[str, dict[int, GeneralFaultStructureEntry]]
 FaultedStructureResult = ty.Union[Atoms, list[dict[str, ty.Any]], GeneralFaultStructureResult]
 
 
@@ -42,6 +62,40 @@ class FaultedStructure(PlanarStructure):
     A class to handle dislocation structures and their manipulations using ASE Atoms.
     """
     
+    @staticmethod
+    def _serialize_vector(vector: ty.Union[numpy.ndarray, list[float]]) -> list[float]:
+        """Return a JSON-serializable vector of floats."""
+        if isinstance(vector, numpy.ndarray):
+            return [float(value) for value in vector.tolist()]
+        return [float(value) for value in vector]
+
+    def _build_general_fault_entry(
+        self,
+        direction_name: str,
+        step_index: int,
+        structure: Atoms,
+        total_cell_shift: numpy.ndarray,
+        interface_slips: dict[int, numpy.ndarray],
+    ) -> GeneralFaultStructureEntry:
+        """Build a generalized fault entry with a frozen metadata snapshot."""
+        total_cell_shift_serialized = self._serialize_vector(total_cell_shift)
+        interface_slips_snapshot = {
+            int(interface): self._serialize_vector(deepcopy(interface_shift))
+            for interface, interface_shift in interface_slips.items()
+        }
+        metadata: GeneralFaultStructureMetadata = {
+            'label': f'sfe_{direction_name}_{step_index:03d}',
+            'direction_name': direction_name,
+            'step_index': step_index,
+            'burger_vector': total_cell_shift_serialized,
+            'total_cell_shift': total_cell_shift_serialized,
+            'interface_slips': interface_slips_snapshot,
+        }
+        return {
+            'structure': structure,
+            'metadata': metadata,
+        }
+
     def get_faulted_structure(self,
                             fault_mode: str,
                             fault_type: str,
@@ -111,7 +165,7 @@ class FaultedStructure(PlanarStructure):
 
         # General Mode
         if fault_mode == 'general' and fault_config.burger_vectors is not None:
-            structures_list: list[GeneralFaultStructurePoint] = []
+            structures_by_direction: GeneralFaultStructureResult = {}
             nsteps = kwargs.get('nsteps', fault_config.nsteps)
             stacking_order = ''.join(layers_dict.keys())
             
@@ -123,9 +177,10 @@ class FaultedStructure(PlanarStructure):
 
             if isinstance(fault_config.burger_vectors, dict):
                 for direction_name, segment in fault_config.burger_vectors.items():
+                    structures_by_direction[direction_name] = {}
                     burgers_vector_for_cell = numpy.zeros(3)
                     faults = numpy.zeros((len(stacking_order_supercell), 3))
-                    path_index = 0
+                    interface_slips: dict[int, numpy.ndarray] = {}
                     step_index = 0
 
                     # Initial state (0 displacement)
@@ -133,33 +188,35 @@ class FaultedStructure(PlanarStructure):
                         new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
                         burgers_vector_for_cell, faults, print_info=print_info
                     )
-                    structures_list.append({
-                        'structure': structure,
-                        'burger_vector': burgers_vector_for_cell.tolist(),
-                        'direction_name': direction_name,
-                        'path_index': path_index,
-                        'step_index': step_index,
-                    })
+                    structures_by_direction[direction_name][step_index] = self._build_general_fault_entry(
+                        direction_name=direction_name,
+                        step_index=step_index,
+                        structure=structure,
+                        total_cell_shift=burgers_vector_for_cell,
+                        interface_slips=interface_slips,
+                    )
 
                     for interface, burgers_vector in segment:
                         burgers_vector_step = numpy.array(burgers_vector) / nsteps
                         for _ in range(1, 1+nsteps):
                             step_index += 1
+                            current_interface_shift = interface_slips.get(interface, numpy.zeros(3))
+                            interface_slips[interface] = current_interface_shift + burgers_vector_step
                             faults = update_faults(faults, interface, burgers_vector_step)
                             burgers_vector_for_cell += burgers_vector_step
                             structure = build_atoms_from_burger_vector_general(
                                 new_cell, deepcopy(zs), layers_dict, stacking_order_supercell,
                                 burgers_vector_for_cell, faults, print_info=print_info
                             )
-                            structures_list.append({
-                                'structure': structure,
-                                'burger_vector': burgers_vector_for_cell.tolist(),
-                                'direction_name': direction_name,
-                                'path_index': path_index,
-                                'step_index': step_index,
-                            })
+                            structures_by_direction[direction_name][step_index] = self._build_general_fault_entry(
+                                direction_name=direction_name,
+                                step_index=step_index,
+                                structure=structure,
+                                total_cell_shift=burgers_vector_for_cell,
+                                interface_slips=interface_slips,
+                            )
                                 
-            faulted_result = structures_list
+            faulted_result = structures_by_direction
             
         return faulted_result
 

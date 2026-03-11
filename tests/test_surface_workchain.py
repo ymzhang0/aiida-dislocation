@@ -154,9 +154,10 @@ def test_gsfe_workchain_generate_structures_indexes_faulted_outputs(
 
     assert result is None
     assert process.ctx.number_of_structures > 0
-    assert process.ctx.generated_structures[0]['structure_key'] == 'sfe_idx_001'
+    assert process.ctx.generated_structures[0]['structure_key'] == 'sfe_110_000'
     assert process.ctx.generated_structures[0]['direction_name']
     assert isinstance(process.ctx.generated_structures[0]['burger_vector'], list)
+    assert process.ctx.generated_structures[0]['interface_slips'] == {}
     assert captured_outputs == {}
 
 
@@ -304,18 +305,15 @@ def test_gsfe_workchain_results_output_is_stored(aiida_profile_clean, aluminum_s
     process = GSFEWorkChain(builder)
     process.ctx.sfe_results = [
         {
-            'structure_label': 'sfe_idx_001',
+            'label': 'sfe_110_000',
             'structure_uuid': 'structure-uuid-001',
-            'iteration': 0,
-            'point_index': 1,
-            'direction_label': 'partial_path_000',
-            'direction_name': 'partial',
-            'path_index': 0,
+            'direction_name': '110',
             'step_index': 0,
             'burger_vector': [0.0, 0.0, 0.0],
-            'total_energy_ev': -10.0,
-            'gsfe_j_m2': 0.12,
-            'workchain_pk': 201,
+            'total_cell_shift': [0.0, 0.0, 0.0],
+            'interface_slips': {},
+            'energy': -10.0,
+            'sfe': 0.12,
             'workchain_uuid': 'uuid-201',
         }
     ]
@@ -337,4 +335,6 @@ def test_gsfe_workchain_results_output_is_stored(aiida_profile_clean, aluminum_s
     assert results['surface_area_angstrom2'] == 7.5
     assert results['number_of_structures'] == 1
     assert results['conventional_energy_ev'] == -2.5
-    assert results['results']['partial_path_000']['001']['sfe_j_m2'] == pytest.approx(0.12)
+    assert results['results']['110']['0']['sfe'] == pytest.approx(0.12)
+    assert results['results']['110']['0']['energy'] == pytest.approx(-10.0)
+    assert results['results']['110']['0']['interface_slips'] == {}

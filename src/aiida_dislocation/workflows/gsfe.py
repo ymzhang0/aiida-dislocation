@@ -302,49 +302,38 @@ class GSFEWorkChain(
             self.report(f'Failed to generate GSFE structures: {exception}')
             return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
-        generated_entries: dict[str, dict[str, ty.Any]] = {}
+        self.ctx.generated_structures = []
 
         for output_label, output_node in generated_structures.items():
-            if output_label.startswith('sfe_idx_'):
-                generated_entries.setdefault(output_label, {})['structure'] = output_node
+            if output_label in ('conventional_structure', 'surface_area') or not isinstance(output_node, orm.StructureData):
                 continue
 
-            if output_label.startswith('burger_vector_sfe_idx_'):
-                structure_key = output_label.removeprefix('burger_vector_')
-                generated_entries.setdefault(structure_key, {})['burger_vector'] = output_node.get_list()
-                continue
+            direction_name = output_node.base.extras.get('direction_name', None)
+            step_index = output_node.base.extras.get('step_index', None)
+            burger_vector = output_node.base.extras.get('burger_vector', None)
+            total_cell_shift = output_node.base.extras.get('total_cell_shift', None)
+            interface_slips = output_node.base.extras.get('interface_slips', None)
 
-            if output_label.startswith('direction_name_sfe_idx_'):
-                structure_key = output_label.removeprefix('direction_name_')
-                generated_entries.setdefault(structure_key, {})['direction_name'] = output_node.value
-                continue
-
-            if output_label.startswith('path_index_sfe_idx_'):
-                structure_key = output_label.removeprefix('path_index_')
-                generated_entries.setdefault(structure_key, {})['path_index'] = output_node.value
-                continue
-
-            if output_label.startswith('step_index_sfe_idx_'):
-                structure_key = output_label.removeprefix('step_index_')
-                generated_entries.setdefault(structure_key, {})['step_index'] = output_node.value
-
-        self.ctx.generated_structures = []
-        for structure_key, generated_entry in sorted(generated_entries.items()):
-            if not all(
-                field in generated_entry
-                for field in ('structure', 'burger_vector', 'direction_name', 'path_index', 'step_index')
-            ):
-                self.report(f'Incomplete faulted-structure entry generated for `{structure_key}`.')
+            if None in (direction_name, step_index, burger_vector, total_cell_shift, interface_slips):
+                self.report(f'Incomplete faulted-structure entry generated for `{output_label}`.')
                 return self.exit_codes.ERROR_NO_STRUCTURE_TYPE_DETECTED
 
             self.ctx.generated_structures.append({
-                'structure_key': structure_key,
-                'structure': generated_entry['structure'],
-                'burger_vector': generated_entry['burger_vector'],
-                'direction_name': generated_entry['direction_name'],
-                'path_index': generated_entry['path_index'],
-                'step_index': generated_entry['step_index'],
+                'structure_key': output_label,
+                'structure': output_node,
+                'direction_name': str(direction_name),
+                'step_index': int(step_index),
+                'burger_vector': [float(value) for value in burger_vector],
+                'total_cell_shift': [float(value) for value in total_cell_shift],
+                'interface_slips': {
+                    str(interface): [float(value) for value in interface_shift]
+                    for interface, interface_shift in interface_slips.items()
+                },
             })
+
+        self.ctx.generated_structures.sort(
+            key=lambda entry: (entry['direction_name'], entry['step_index'])
+        )
 
         if not self.ctx.generated_structures:
             self.report('No generalized fault path is available for the selected structure and gliding plane.')
@@ -434,12 +423,11 @@ class GSFEWorkChain(
         current_entry = self.ctx.generated_structures[self.ctx.iteration]
         self.ctx.current_structure_key = current_entry['structure_key']
         self.ctx.current_structure = current_entry['structure']
-        self.ctx.current_slipping_vector = current_entry['burger_vector']
         self.ctx.current_direction_name = current_entry['direction_name']
-        self.ctx.current_path_index = current_entry['path_index']
         self.ctx.current_step_index = current_entry['step_index']
-        self.ctx.current_point_index = self.ctx.iteration + 1
-        self.ctx.current_direction_label = f"{self.ctx.current_direction_name}_path_{self.ctx.current_path_index:03d}"
+        self.ctx.current_burger_vector = current_entry['burger_vector']
+        self.ctx.current_total_cell_shift = current_entry['total_cell_shift']
+        self.ctx.current_interface_slips = current_entry['interface_slips']
         self.ctx.current_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
         self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
             self.ctx.current_structure,
@@ -487,18 +475,18 @@ class GSFEWorkChain(
             )
 
         self.ctx.sfe_results.append({
-            'structure_label': self.ctx.current_structure_key,
+            'label': self.ctx.current_structure_key,
             'structure_uuid': self.ctx.current_structure.uuid,
-            'iteration': self.ctx.iteration,
-            'point_index': self.ctx.current_point_index,
-            'direction_label': self.ctx.current_direction_label,
             'direction_name': self.ctx.current_direction_name,
-            'path_index': self.ctx.current_path_index,
             'step_index': self.ctx.current_step_index,
-            'burger_vector': [float(value) for value in self.ctx.current_slipping_vector],
-            'total_energy_ev': float(total_energy_faulted_geometry),
-            'gsfe_j_m2': float(gsfe_j_m2) if gsfe_j_m2 is not None else None,
-            'workchain_pk': workchain.pk,
+            'burger_vector': [float(value) for value in self.ctx.current_burger_vector],
+            'total_cell_shift': [float(value) for value in self.ctx.current_total_cell_shift],
+            'interface_slips': {
+                str(interface): [float(value) for value in interface_shift]
+                for interface, interface_shift in self.ctx.current_interface_slips.items()
+            },
+            'energy': float(total_energy_faulted_geometry),
+            'sfe': float(gsfe_j_m2) if gsfe_j_m2 is not None else None,
             'workchain_uuid': workchain.uuid,
         })
         self.ctx.iteration += 1
@@ -508,21 +496,16 @@ class GSFEWorkChain(
         nested_results: dict[str, dict[str, dict[str, ty.Any]]] = {}
 
         for point_result in self.ctx.sfe_results:
-            direction_results = nested_results.setdefault(point_result['direction_label'], {})
-            point_index = f"{point_result['point_index']:03d}"
-            direction_results[point_index] = {
-                'structure_label': point_result['structure_label'],
+            direction_results = nested_results.setdefault(point_result['direction_name'], {})
+            direction_results[str(point_result['step_index'])] = {
+                'label': point_result['label'],
                 'structure_uuid': point_result['structure_uuid'],
-                'iteration': point_result['iteration'],
-                'point_index': point_result['point_index'],
-                'direction_name': point_result['direction_name'],
-                'path_index': point_result['path_index'],
                 'step_index': point_result['step_index'],
-                'displacement_vector': point_result['burger_vector'],
                 'burger_vector': point_result['burger_vector'],
-                'total_energy_ev': point_result['total_energy_ev'],
-                'sfe_j_m2': point_result['gsfe_j_m2'],
-                'workchain_pk': point_result['workchain_pk'],
+                'total_cell_shift': point_result['total_cell_shift'],
+                'interface_slips': point_result['interface_slips'],
+                'energy': point_result['energy'],
+                'sfe': point_result['sfe'],
                 'workchain_uuid': point_result['workchain_uuid'],
             }
 

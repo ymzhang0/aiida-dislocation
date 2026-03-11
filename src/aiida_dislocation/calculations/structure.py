@@ -9,7 +9,11 @@ from aiida import orm
 from aiida.engine import calcfunction
 
 from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
-from aiida_dislocation.data.faulted_structure import FaultedStructureData, GeneralFaultStructurePoint
+from aiida_dislocation.data.faulted_structure import (
+    FaultedStructureData,
+    GeneralFaultStructurePoint,
+    GeneralFaultStructureResult,
+)
 
 
 def _normalize_faulted_structure_points(
@@ -22,10 +26,12 @@ def _normalize_faulted_structure_points(
 
     if isinstance(generated, Atoms):
         return [{
+            'label': f'sfe_{fault_type}_000',
             'structure': generated,
             'burger_vector': [],
+            'total_cell_shift': [],
+            'interface_slips': {},
             'direction_name': fault_type,
-            'path_index': 0,
             'step_index': 0,
         }]
 
@@ -34,10 +40,12 @@ def _normalize_faulted_structure_points(
         for index, item in enumerate(generated):
             if isinstance(item, Atoms):
                 normalized.append({
+                    'label': f'sfe_{fault_type}_{index:03d}',
                     'structure': item,
                     'burger_vector': [],
+                    'total_cell_shift': [],
+                    'interface_slips': {},
                     'direction_name': fault_type,
-                    'path_index': 0,
                     'step_index': index,
                 })
                 continue
@@ -46,12 +54,39 @@ def _normalize_faulted_structure_points(
                 raise TypeError('Unsupported faulted structure payload returned by `FaultedStructureData`.')
 
             normalized.append({
+                'label': str(item.get('label', f'sfe_{item.get("direction_name", fault_type)}_{index:03d}')),
                 'structure': item['structure'],
                 'burger_vector': [float(value) for value in item.get('burger_vector', [])],
+                'total_cell_shift': [float(value) for value in item.get('total_cell_shift', item.get('burger_vector', []))],
+                'interface_slips': {
+                    int(interface): [float(value) for value in interface_shift]
+                    for interface, interface_shift in item.get('interface_slips', {}).items()
+                },
                 'direction_name': item.get('direction_name', fault_type),
-                'path_index': int(item.get('path_index', 0)),
                 'step_index': int(item.get('step_index', index)),
             })
+
+        return normalized
+
+    if isinstance(generated, dict):
+        normalized = []
+        general_result = ty.cast(GeneralFaultStructureResult, generated)
+
+        for direction_name, steps in general_result.items():
+            for step_index, entry in sorted(steps.items()):
+                metadata = entry['metadata']
+                normalized.append({
+                    'label': metadata['label'],
+                    'structure': entry['structure'],
+                    'burger_vector': [float(value) for value in metadata['burger_vector']],
+                    'total_cell_shift': [float(value) for value in metadata['total_cell_shift']],
+                    'interface_slips': {
+                        int(interface): [float(value) for value in interface_shift]
+                        for interface, interface_shift in metadata['interface_slips'].items()
+                    },
+                    'direction_name': direction_name,
+                    'step_index': int(step_index),
+                })
 
         return normalized
 
@@ -61,11 +96,6 @@ def _normalize_faulted_structure_points(
 def _format_spacing_key(vacuum_spacing: float) -> str:
     """Return a Dict-safe key for a vacuum spacing."""
     return f'{vacuum_spacing:.6f}'.replace('.', '_')
-
-
-def _format_fault_key(index: int) -> str:
-    """Return the standard output key for a generated faulted structure."""
-    return f'sfe_idx_{index:03d}'
 
 
 @calcfunction
@@ -91,13 +121,22 @@ def generate_faulted_structures(
         'surface_area': orm.Float(float(builder.surface_area)),
     }
 
-    for index, point in enumerate(normalized_points, start=1):
-        key = _format_fault_key(index)
-        outputs[key] = orm.StructureData(ase=point['structure'])
-        outputs[f'burger_vector_{key}'] = orm.List(list=[float(value) for value in point['burger_vector']])
-        outputs[f'direction_name_{key}'] = orm.Str(point['direction_name'])
-        outputs[f'path_index_{key}'] = orm.Int(int(point['path_index']))
-        outputs[f'step_index_{key}'] = orm.Int(int(point['step_index']))
+    for point in normalized_points:
+        key = point['label']
+        structure_node = orm.StructureData(ase=point['structure'])
+        structure_node.label = key
+        structure_node.base.extras.set_many({
+            'label': key,
+            'direction_name': point['direction_name'],
+            'step_index': int(point['step_index']),
+            'burger_vector': [float(value) for value in point['burger_vector']],
+            'total_cell_shift': [float(value) for value in point['total_cell_shift']],
+            'interface_slips': {
+                str(interface): [float(value) for value in interface_shift]
+                for interface, interface_shift in point['interface_slips'].items()
+            },
+        })
+        outputs[key] = structure_node
 
     return outputs
 
