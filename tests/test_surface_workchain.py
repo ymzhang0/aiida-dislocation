@@ -11,6 +11,7 @@ from ase.build import bulk
 
 from aiida_dislocation.data.cleavaged_structure import CleavagedStructureData
 from aiida_dislocation.data.faulted_structure import FaultedStructureData
+from aiida_dislocation.workflows import gsfe as gsfe_module
 from aiida_dislocation.workflows import mixins
 from aiida_dislocation.workflows.gsfe import GSFEWorkChain
 from aiida_dislocation.workflows.surface import SurfaceEnergyWorkChain
@@ -199,6 +200,48 @@ def test_gsfe_workchain_generate_structures_indexes_faulted_outputs(
     assert isinstance(process.ctx.generated_structures[0]['burger_vector'], list)
     assert process.ctx.generated_structures[0]['interface_slips'] == {}
     assert captured_outputs == {}
+
+
+def test_gsfe_workchain_reuses_first_faulted_structure_kpoints(
+    aiida_profile_clean,
+    aluminum_structure,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GSFE should generate faulted-structure kpoints once from the first slip state and then reuse them."""
+    builder = GSFEWorkChain.get_builder()
+    builder.structure = aluminum_structure
+    builder.faulted_structure_data = FaultedStructureData(
+        n_unit_cells=4,
+        gliding_plane='111',
+    )
+    builder.kpoints_distance = orm.Float(0.3)
+    builder.clean_workdir = orm.Bool(False)
+    builder.pop('relax', None)
+    builder.pop('scf', None)
+    builder.pop('sfe', None)
+
+    process = GSFEWorkChain(builder)
+    create_calls: list[str] = []
+
+    def _fake_create_kpoints_from_distance(**inputs):
+        create_calls.append(inputs['metadata']['call_link_label'])
+        kpoints = orm.KpointsData()
+        if inputs['metadata']['call_link_label'] == 'create_kpoints_from_distance':
+            kpoints.set_kpoints_mesh([4, 4, 2])
+        else:
+            kpoints.set_kpoints_mesh([4, 4, 1])
+        return kpoints
+
+    monkeypatch.setattr(gsfe_module, 'create_kpoints_from_distance', _fake_create_kpoints_from_distance)
+
+    assert process.generate_structures() is None
+    process.setup()
+
+    assert create_calls == [
+        'create_kpoints_from_distance',
+        'create_kpoints_from_distance_sfe',
+    ]
+    assert process.ctx.kpoints_sfe.get_kpoints_mesh()[0] == [4, 4, 1]
 
 
 def test_surface_workchain_results_aggregates_vacuum_spacings(aiida_profile_clean, aluminum_structure) -> None:

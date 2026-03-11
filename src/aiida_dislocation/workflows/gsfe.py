@@ -365,13 +365,27 @@ class GSFEWorkChain(
         
         return kpoints_scf
 
+    def _get_kpoints_sfe(self) -> orm.KpointsData:
+        """Get or create the shared k-point mesh for all generated GSFE structures."""
+        if 'kpoints_sfe' in self.ctx:
+            return self.ctx.kpoints_sfe
+
+        first_faulted_structure = self.ctx.generated_structures[0]['structure']
+        inputs = {
+            'structure': first_faulted_structure,
+            'distance': self.inputs.kpoints_distance,
+            'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
+            'metadata': {
+                'call_link_label': 'create_kpoints_from_distance_sfe'
+            }
+        }
+        return create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
+
     def setup(self) -> None:
         self.ctx.iteration = 0
         self.ctx.sfe_results = []
-        # Get kpoints_scf
-        kpoints_scf = self._get_kpoints_scf()
-        
-        self.ctx.kpoints_scf = kpoints_scf
+        self.ctx.kpoints_scf = self._get_kpoints_scf()
+        self.ctx.kpoints_sfe = self._get_kpoints_sfe()
 
     def should_run_scf(self) -> bool:
         return self._SCF_NAMESPACE in self.inputs
@@ -429,10 +443,6 @@ class GSFEWorkChain(
         self.ctx.current_total_cell_shift = current_entry['total_cell_shift']
         self.ctx.current_interface_slips = current_entry['interface_slips']
         self.ctx.current_multiplier = self._calculate_structure_multiplier(self.ctx.current_structure)
-        self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
-            self.ctx.current_structure,
-            self.ctx.kpoints_scf,
-        )
 
         return True
 
