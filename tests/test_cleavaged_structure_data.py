@@ -57,22 +57,27 @@ def test_generate_cleavaged_structures_match_legacy_builders(aiida_profile_clean
     assert legacy_strukturbericht == 'A1'
 
     _assert_atoms_match(generated['conventional_structure'].get_ase(), legacy_conventional)
-    structure_map = generated['structure_map'].get_dict()
-    assert len(structure_map) == 2
+    generated_slabs = {
+        label: node for label, node in generated.items() if label.startswith('slab_')
+    }
+    generated_vacuum_spacings = {
+        label: node.value for label, node in generated.items() if label.startswith('vacuum_spacing_')
+    }
+    assert len(generated_slabs) == 2
+    assert generated_vacuum_spacings == {
+        'vacuum_spacing_0_500000': 0.5,
+        'vacuum_spacing_1_000000': 1.0,
+    }
 
     legacy_layers = group_by_layers(legacy_conventional)
 
-    for index, vacuum_spacing in enumerate([0.5, 1.0], start=1):
+    for vacuum_spacing in [0.5, 1.0]:
         legacy_cleavaged = build_atoms_surface(
             legacy_conventional,
             4,
             legacy_layers,
             vacuum_spacing=vacuum_spacing,
         )
-        key = f'slab_idx_{index:03d}'
-        assert key in generated
-        assert key in structure_map
-        _assert_atoms_match(generated[key].get_ase(), legacy_cleavaged)
-        assert structure_map[key]['point_index'] == index
-        assert structure_map[key]['vacuum_spacing'] == vacuum_spacing
-        assert structure_map[key]['structure_uuid'] == generated[key].uuid
+        key = f"slab_{vacuum_spacing:.6f}".replace('.', '_')
+        assert key in generated_slabs
+        _assert_atoms_match(generated_slabs[key].get_ase(), legacy_cleavaged)

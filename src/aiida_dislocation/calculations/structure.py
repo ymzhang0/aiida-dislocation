@@ -23,14 +23,6 @@ class FaultedStructureMetadata(ty.TypedDict):
     burger_vector: list[float]
 
 
-class CleavagedStructureMetadata(ty.TypedDict):
-    """Metadata stored for each generated slab structure."""
-
-    point_index: int
-    structure_uuid: str
-    vacuum_spacing: float
-
-
 def _normalize_faulted_structure_points(
     generated: ty.Any,
     fault_type: str,
@@ -75,6 +67,11 @@ def _normalize_faulted_structure_points(
         return normalized
 
     raise TypeError('Unsupported faulted structure payload returned by `FaultedStructureData`.')
+
+
+def _format_spacing_key(vacuum_spacing: float) -> str:
+    """Return a Dict-safe key for a vacuum spacing."""
+    return f'{vacuum_spacing:.6f}'.replace('.', '_')
 
 
 @calcfunction
@@ -132,22 +129,22 @@ def generate_cleavaged_structures(
     if not vacuum_spacings:
         raise ValueError('No vacuum spacings configured for cleavaged structure generation.')
 
-    metadata: dict[str, CleavagedStructureMetadata] = {}
     outputs: dict[str, orm.Data] = {
-        'structure_map': orm.Dict(dict={}),
         'conventional_structure': orm.StructureData(ase=builder.get_conventional_structure()),
         'surface_area': orm.Float(float(builder.surface_area)),
     }
 
-    for index, vacuum_spacing in enumerate(vacuum_spacings, start=1):
-        key = f'slab_idx_{index:03d}'
-        structure_node = orm.StructureData(ase=builder.get_cleavaged_structure(vacuum_spacing=vacuum_spacing))
-        outputs[key] = structure_node
-        metadata[key] = {
-            'point_index': index,
-            'structure_uuid': structure_node.uuid,
-            'vacuum_spacing': float(vacuum_spacing),
-        }
+    for vacuum_spacing in vacuum_spacings:
+        spacing_key = _format_spacing_key(float(vacuum_spacing))
+        slab_key = f'slab_{spacing_key}'
+        spacing_output_key = f'vacuum_spacing_{spacing_key}'
 
-    outputs['structure_map'] = orm.Dict(dict=metadata)
+        if slab_key in outputs or spacing_output_key in outputs:
+            raise ValueError(f'Duplicate vacuum spacing key generated for {vacuum_spacing}.')
+
+        outputs[spacing_output_key] = orm.Float(float(vacuum_spacing))
+        outputs[slab_key] = orm.StructureData(
+            ase=builder.get_cleavaged_structure(vacuum_spacing=vacuum_spacing)
+        )
+
     return outputs

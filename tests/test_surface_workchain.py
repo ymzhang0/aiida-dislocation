@@ -80,7 +80,7 @@ def test_surface_workchain_generate_structures_indexes_by_vacuum_spacing(
     aiida_profile_clean,
     aluminum_structure,
 ) -> None:
-    """Surface workflow should index generated slabs by vacuum spacing."""
+    """Surface workflow should build slab entries from direct calcfunction outputs."""
     builder = SurfaceEnergyWorkChain.get_builder()
     builder.structure = aluminum_structure
     builder.cleavaged_structure_data = CleavagedStructureData(
@@ -104,10 +104,10 @@ def test_surface_workchain_generate_structures_indexes_by_vacuum_spacing(
     result = process.generate_structures()
 
     assert result is None
-    assert process.ctx.spacing_keys == ['0_500000', '1_000000']
-    assert process.ctx.generated_structures['0_500000']['vacuum_spacing'] == pytest.approx(0.5)
-    assert process.ctx.generated_structures['1_000000']['vacuum_spacing'] == pytest.approx(1.0)
-    assert 'structure_uuid' in process.ctx.generated_structures['0_500000']
+    assert process.ctx.number_of_spacings == 2
+    assert process.ctx.generated_structures[0]['vacuum_spacing'] == pytest.approx(0.5)
+    assert process.ctx.generated_structures[1]['vacuum_spacing'] == pytest.approx(1.0)
+    assert process.ctx.generated_structures[0]['structure'].uuid is not None
     assert captured_outputs == {}
 
 
@@ -132,7 +132,6 @@ def test_surface_workchain_inspect_surface_energy_uses_structuredata_formula(
     process = SurfaceEnergyWorkChain(builder)
     process.ctx.iteration = 1
     process.ctx.current_spacing_key = '0_500000'
-    process.ctx.current_structure_uuid = aluminum_structure.uuid
     process.ctx.current_spacing = 0.5
     process.ctx.current_structure = aluminum_structure
     process.ctx.results = {}
