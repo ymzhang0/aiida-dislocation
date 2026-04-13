@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as ty
+import numpy
 
 from aiida import orm
 from aiida.common import AttributeDict
@@ -25,7 +26,7 @@ from .mixins import (
     clean_workchain_calcs,
 )
 
-class GSFEWorkChain(
+class GSFERelaxWorkChain(
     ProtocolMixin,
     StructureGenerationMixin,
     EnergyCalculationMixin,
@@ -34,7 +35,7 @@ class GSFEWorkChain(
     WorkChain):
     """GSFE WorkChain"""
 
-    _NAMESPACE = 'gsfe'
+    _NAMESPACE = 'gsfe_relax'
 
     _RELAX_NAMESPACE = "relax"
     _SCF_NAMESPACE = "scf"
@@ -93,10 +94,10 @@ class GSFEWorkChain(
             }
         )
         spec.expose_inputs(
-            PwBaseWorkChain,
+            PwRelaxWorkChain,
             namespace=cls._SFE_NAMESPACE,
             exclude=(
-                'pw.structure',
+                'structure',
                 'clean_workdir',
                 'kpoints',
                 'kpoints_distance',
@@ -104,7 +105,7 @@ class GSFEWorkChain(
             namespace_options={
                 'required': False,
                 'populate_defaults': False,
-                'help': 'Inputs for the `PwBaseWorkChain` for USF calculation.'
+                'help': 'Inputs for the `PwRelaxWorkChain` for SFE calculation.'
             }
         )
 
@@ -149,18 +150,18 @@ class GSFEWorkChain(
         spec.exit_code(
             401,
             "ERROR_SUB_PROCESS_FAILED_RELAX",
-            message='The `PwBaseWorkChain` for the GSF run failed.',
+            message='The `PwRelaxWorkChain` for the relax run failed.',
         )
         
         spec.exit_code(
             402,
             "ERROR_SUB_PROCESS_FAILED_SCF",
-            message='The `PwBaseWorkChain` for the USF run failed.',
+            message='The `PwBaseWorkChain` for the SCF run failed.',
         )
         spec.exit_code(
             403,
-            "ERROR_SUB_PROCESS_FAILED_USF",
-            message='The `PwBaseWorkChain` for the USF run failed.',
+            "ERROR_SUB_PROCESS_FAILED_SFE",
+            message='The `PwRelaxWorkChain` for the SFE run failed.',
         )
         spec.exit_code(
             405,
@@ -208,7 +209,7 @@ class GSFEWorkChain(
         for namespace, workchain_type in [
             (cls._RELAX_NAMESPACE, PwRelaxWorkChain),
             (cls._SCF_NAMESPACE, PwBaseWorkChain),
-            (cls._SFE_NAMESPACE, PwBaseWorkChain),
+            (cls._SFE_NAMESPACE, PwRelaxWorkChain),
         ]:
             overrides = inputs.get(namespace, {})
 
@@ -225,18 +226,19 @@ class GSFEWorkChain(
             sub_builder.pop('structure', None)
             sub_builder.pop('clean_workdir', None)
 
-            if namespace != cls._RELAX_NAMESPACE:
+            if workchain_type == PwBaseWorkChain:
                 sub_builder.pop('kpoints', None)
                 sub_builder.pop('kpoints_distance', None)
 
+            if workchain_type == PwRelaxWorkChain:
+                sub_builder.pop('base_init_relax', None)
+                if 'base_relax' in sub_builder:
+                    sub_builder['base_relax'].pop('kpoints', None)
+                    sub_builder['base_relax'].pop('kpoints_distance', None)
+
+
             builder[namespace]._data = sub_builder._data
 
-        if cls._RELAX_NAMESPACE in builder:
-            builder[cls._RELAX_NAMESPACE].pop('base_init_relax', None)
-            if 'base_relax' in builder[cls._RELAX_NAMESPACE]:
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints', None)
-                builder[cls._RELAX_NAMESPACE]['base_relax'].pop('kpoints_distance', None)
-        
         builder.structure = structure
         resolved_n_repeats = n_repeats.value if isinstance(n_repeats, orm.Int) else n_repeats
         resolved_gliding_plane = gliding_plane.value if isinstance(gliding_plane, orm.Str) else gliding_plane
@@ -450,18 +452,36 @@ class GSFEWorkChain(
     def run_sfe(self) -> dict[str, ty.Any]:
         inputs = AttributeDict(
             self.exposed_inputs(
-                PwBaseWorkChain,
+                PwRelaxWorkChain,
                 namespace=self._SFE_NAMESPACE
             )
         )
         inputs.metadata.call_link_label = self.ctx.current_structure_key
 
-        inputs.pw.structure = self.ctx.current_structure
-        inputs.kpoints = self.ctx.kpoints_sfe
+        inputs.structure = self.ctx.current_structure
+        inputs.base_relax.kpoints = self.ctx.kpoints_sfe
 
-        running = self.submit(PwBaseWorkChain, **inputs)
+        parameters = inputs.base_relax.pw.parameters.get_dict()
+        parameters['CELL']['cell_dofree'] = 'ibrav+epitaxial_ab'
+        inputs.base_relax.pw.parameters = orm.Dict(parameters)
+        
+        # Apply fixed coordinates for relaxation
+        settings = inputs.base_relax.pw.settings.get_dict()
+        settings['USE_FRACTIONAL'] = False
+        
+        FIXED_COORDS = numpy.full_like(
+            self.ctx.current_structure.get_ase().get_positions(),
+            fill_value=True,
+            dtype=bool
+        )
+        FIXED_COORDS[:, 0] = False
+
+        settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
+        inputs.base_relax.pw.settings = orm.Dict(settings)
+
+        running = self.submit(PwRelaxWorkChain, **inputs)
         self.report(
-            f'launching PwBaseWorkChain<{running.pk}> for faulted structure '
+            f'launching PwRelaxWorkChain<{running.pk}> for faulted structure '
             f'{self.ctx.iteration + 1}/{self.ctx.number_of_structures} ({self.ctx.current_structure_key}).'
         )
 
@@ -470,10 +490,10 @@ class GSFEWorkChain(
     def inspect_sfe(self) -> ty.Optional[ExitCode]:
         workchain = self.ctx.workchain_sfe[-1]
         if not workchain.is_finished_ok:
-            self.report(f'PwBaseWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
-            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_USF
+            self.report(f'PwRelaxWorkChain<{workchain.pk}> failed with exit status {workchain.exit_status}')
+            return self.exit_codes.ERROR_SUB_PROCESS_FAILED_SFE
 
-        self.report(f'PwBaseWorkChain<{workchain.pk}> finished')
+        self.report(f'PwRelaxWorkChain<{workchain.pk}> finished')
 
         total_energy_faulted_geometry = self._get_workchain_energy(workchain)
         gsfe_j_m2 = None

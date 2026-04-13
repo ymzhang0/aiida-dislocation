@@ -85,6 +85,7 @@ tests = [
 
 [project.entry-points.'aiida.workflows']
 'dislocation.gsfe' = 'aiida_dislocation.workflows.gsfe:GSFEWorkChain'
+'dislocation.gsfe_relax' = 'aiida_dislocation.workflows.gsfe_relax:GSFERelaxWorkChain'
 'dislocation.isfe' = 'aiida_dislocation.workflows.isfe:ISFEWorkChain'
 'dislocation.esfe' = 'aiida_dislocation.workflows.esfe:ESFEWorkChain'
 'dislocation.usfe' = 'aiida_dislocation.workflows.usfe:USFEWorkChain'

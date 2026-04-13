@@ -226,7 +226,7 @@ class B1GlidingSystem(GlidingSystem):
                     ),
                     '010': (
                         (2, [0, 1, 0]),
-                    )
+                    ),
                     },
                 interface=[2, ],
                 nsteps = 8
