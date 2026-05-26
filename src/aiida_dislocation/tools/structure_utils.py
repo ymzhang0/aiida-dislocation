@@ -4,6 +4,7 @@ import pathlib
 from aiida import orm
 from copy import deepcopy
 from deprecated import deprecated
+import importlib.resources
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 class AttributeDict(dict):
@@ -29,41 +30,33 @@ class AttributeDict(dict):
 def check_bravais_lattice(ase_atoms):
     bl = ase_atoms.cell.get_bravais_lattice(eps=1e-6)
     return bl.name
+def __getattr__(name):
+    if name == 'available_structures':
+        import importlib.resources
+        return [
+            f.stem
+            for f in importlib.resources.files('aiida_dislocation.data').glob('structures/cif/*.cif')
+        ]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def read_structure_from_file(
-    filename: ty.Union[str, pathlib.Path],
+    formula: str,
     store: bool = False
     ) -> orm.StructureData:
-    """Read a xsf/xyz/cif/.. file and return aiida ``StructureData``."""
+    """Read a cif file by its chemical formula (or path) and return aiida ``StructureData``."""
     from ase.io import read as aseread
+    import importlib.resources
 
-    if filename in [
-        'Al',
-        'V',
-        'Cu',
-        'NiTi',
-        'TaRu3C',
-        'Nb3Sn',
-        'CrH',
-        'AsTe',
-        'NaCl',
-        'KCl',
-        'NbCoSb',
-        'ZrRuSb',
-        'TiSbRu',
-        'TiAlPt',
-        'MoN',
-        'HfAlPd2',
-        'ZrGaNi2',
-        'YSnPd2',
-        'ZrAlNi2',
-        'MgB2',
-        'TaSe2',
-        'VC'
-        ]:
-        import importlib.resources
+    formula_str = str(formula)
+    
+    if formula_str.endswith('.cif'):
+        raise ValueError("Please provide the chemical formula without the .cif extension (e.g. 'Al' instead of 'Al.cif')")
+
+    if formula_str in __getattr__('available_structures'):
         data_path = importlib.resources.files('aiida_dislocation.data')
-        filename = data_path / f'structures/cif/{filename}.cif'
+        filename = data_path / f'structures/cif/{formula_str}.cif'
+    else:
+        filename = formula_str
 
     struct = orm.StructureData(ase=aseread(filename))
 

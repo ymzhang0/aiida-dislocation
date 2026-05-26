@@ -68,8 +68,8 @@ class GSFERelaxWorkChain(
             exclude=(
                 'structure',
                 'clean_workdir',
-                'kpoints',
-                'kpoints_distance',
+                'base_relax.kpoints',
+                'base_relax.kpoints_distance',
             ),
             namespace_options={
                 'required': False,
@@ -99,8 +99,8 @@ class GSFERelaxWorkChain(
             exclude=(
                 'structure',
                 'clean_workdir',
-                'kpoints',
-                'kpoints_distance',
+                'base_relax.kpoints',
+                'base_relax.kpoints_distance',
             ),
             namespace_options={
                 'required': False,
@@ -368,27 +368,31 @@ class GSFERelaxWorkChain(
         
         return kpoints_scf
 
-    def _get_kpoints_sfe(self) -> orm.KpointsData:
-        """Get or create the shared k-point mesh for all generated GSFE structures."""
-        if 'kpoints_sfe' in self.ctx:
-            return self.ctx.kpoints_sfe
+    # def _get_kpoints_sfe(self) -> orm.KpointsData:
+    #     """Get or create the shared k-point mesh for all generated GSFE structures."""
+    #     if 'kpoints_sfe' in self.ctx:
+    #         return self.ctx.kpoints_sfe
 
-        first_faulted_structure = self.ctx.generated_structures[0]['structure']
-        inputs = {
-            'structure': first_faulted_structure,
-            'distance': self.inputs.kpoints_distance,
-            'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
-            'metadata': {
-                'call_link_label': 'create_kpoints_from_distance_sfe'
-            }
-        }
-        return create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
+    #     first_faulted_structure = self.ctx.generated_structures[0]['structure']
+    #     inputs = {
+    #         'structure': first_faulted_structure,
+    #         'distance': self.inputs.kpoints_distance,
+    #         'force_parity': self.inputs.get('kpoints_force_parity', orm.Bool(False)),
+    #         'metadata': {
+    #             'call_link_label': 'create_kpoints_from_distance_sfe'
+    #         }
+    #     }
+    #     return create_kpoints_from_distance(**inputs)  # pylint: disable=unexpected-keyword-arg
 
     def setup(self) -> None:
         self.ctx.iteration = 0
         self.ctx.sfe_results = []
         self.ctx.kpoints_scf = self._get_kpoints_scf()
-        self.ctx.kpoints_sfe = self._get_kpoints_sfe()
+        # self.ctx.kpoints_sfe = self._get_kpoints_sfe()
+        self.ctx.kpoints_sfe = self._calculate_kpoints_for_structure(
+            self.ctx.generated_structures[0]['structure'],
+            self.ctx.kpoints_scf,
+        )
 
     def should_run_scf(self) -> bool:
         return self._SCF_NAMESPACE in self.inputs
@@ -462,7 +466,7 @@ class GSFERelaxWorkChain(
         inputs.base_relax.kpoints = self.ctx.kpoints_sfe
 
         parameters = inputs.base_relax.pw.parameters.get_dict()
-        parameters['CELL']['cell_dofree'] = 'ibrav+epitaxial_ab'
+        parameters['CELL']['cell_dofree'] = 'z'
         inputs.base_relax.pw.parameters = orm.Dict(parameters)
         
         # Apply fixed coordinates for relaxation
@@ -474,7 +478,7 @@ class GSFERelaxWorkChain(
             fill_value=True,
             dtype=bool
         )
-        FIXED_COORDS[:, 0] = False
+        FIXED_COORDS[:, -1] = False
 
         settings['FIXED_COORDS'] = FIXED_COORDS.tolist()
         inputs.base_relax.pw.settings = orm.Dict(settings)

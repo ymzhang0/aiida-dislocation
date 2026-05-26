@@ -18,6 +18,48 @@ from aiida_dislocation.data.gliding_systems import (
 from aiida_dislocation.tools.structure_builder import build_atoms_surface
 from aiida_dislocation.tools.structure_utils import get_strukturbericht, group_by_layers
 
+def find_rotation(src_vectors, dst_vectors):
+    """
+    Finds the rotation matrix R, axis, and angle between two sets of vectors.
+    src_vectors: (3, N) array
+    dst_vectors: (3, N) array
+    """
+
+    src_norm = src_vectors / numpy.linalg.norm(src_vectors, axis=0)
+    dst_norm = dst_vectors / numpy.linalg.norm(dst_vectors, axis=0)
+    
+    # 1. Compute Covariance Matrix H
+    H = dst_norm @ src_norm.T
+    
+    # 2. SVD
+    U, S, Vt = numpy.linalg.svd(H)
+    
+    # 3. Compute Rotation Matrix R
+    R = U @ Vt
+    
+    # Special reflection check
+    if numpy.linalg.det(R) < 0:
+        U[:, -1] *= -1
+        R = U @ Vt
+        
+    # 4. Extract Angle
+    trace_r = numpy.trace(R)
+    angle = numpy.arccos(numpy.clip((trace_r - 1.0) / 2.0, -1.0, 1.0))
+    
+    # 5. Extract Axis
+    # R - R.T = 2 * sin(theta) * skew_symmetric(axis)
+    if angle < 1e-6:
+        axis = numpy.array([0.0, 0.0, 1.0]) # Arbitrary axis for zero rotation
+    else:
+        axis_vals = numpy.array([
+            R[2, 1] - R[1, 2],
+            R[0, 2] - R[2, 0],
+            R[1, 0] - R[0, 1]
+        ])
+        axis = axis_vals / (2 * numpy.sin(angle))
+        axis = axis / numpy.linalg.norm(axis)
+        
+    return angle* 180 / numpy.pi, axis
 
 class PlanarStructure:
     """Shared helper for conventional cell operations on a selected gliding plane."""
@@ -109,8 +151,14 @@ class PlanarStructure:
             P = plane_config.transformation_matrix
         else:
             P = numpy.array(P)
+        
+        conventional_structure = make_supercell(self.unit_cell, P)
 
-        return make_supercell(self.unit_cell, P)
+        target_unit_vectors = plane_config.target_unit_vectors
+        if target_unit_vectors is not None:
+            angle, axis = find_rotation(conventional_structure.cell.T, numpy.array(target_unit_vectors).T)
+            conventional_structure.rotate(angle, axis, rotate_cell =True)
+        return conventional_structure
 
 class CleavagedStructure(PlanarStructure):
     """Helper for conventional and cleavaged structure generation."""

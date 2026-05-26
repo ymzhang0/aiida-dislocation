@@ -23,6 +23,7 @@ class GlidingPlaneConfig:
     """Configuration for a specific gliding plane."""
     transformation_matrix: list[list[int]]
     transformation_matrix_c: ty.Optional[list[list[int]]] = None
+    target_unit_vectors: ty.Optional[list[list[float]]] = None
     n_layers: int = 2
     intrinsic: FaultConfig = field(default_factory=FaultConfig)
     unstable: FaultConfig = field(default_factory=FaultConfig)
@@ -98,6 +99,7 @@ class A1GlidingSystem(GlidingSystem):
         self._planes['111'] = GlidingPlaneConfig(
             transformation_matrix=[[1, -1, 0], [1, 0, -1], [1, 1, 1]],
             transformation_matrix_c=[[1, -1, 0], [1, 1, -2], [1, 1, 1]],
+            target_unit_vectors = [[1, 1, 0], [-1, 1, 0], [0, 0, 1]],
             n_layers=3,
             intrinsic=FaultConfig(
                 possible=True,
@@ -254,7 +256,6 @@ class B1GlidingSystem(GlidingSystem):
             )
         )
 
-
 class B2GlidingSystem(GlidingSystem):
     """B2 (CsCl) gliding system."""
     
@@ -319,7 +320,8 @@ class C1bGlidingSystem(GlidingSystem):
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
-            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            transformation_matrix=[[0, -1, 1], [1, 0, 0], [-1, 1, 1]],
+            target_unit_vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             n_layers=4,
             intrinsic=FaultConfig(
                 removal_layers=[2],
@@ -340,6 +342,7 @@ class C1bGlidingSystem(GlidingSystem):
         )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            target_unit_vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             n_layers=2,
             intrinsic=FaultConfig(
                 removal_layers=[2],
@@ -361,7 +364,7 @@ class C1bGlidingSystem(GlidingSystem):
                     )
                     },
                 # interface=(2, 2),
-                nsteps = 6
+                nsteps = 12
             )
         )
         self._planes['111'] = GlidingPlaneConfig(
@@ -386,13 +389,13 @@ class C1bGlidingSystem(GlidingSystem):
             )
         )
 
-
 class L21GlidingSystem(GlidingSystem):
     """L21 (Heusler) gliding system."""
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
-            transformation_matrix=[[1, 0, 0], [0, -1, 1], [-1, 1, 1]],
+            transformation_matrix=[[0, -1, 1], [1, 0, 0], [-1, 1, 1]],
+            target_unit_vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             n_layers=4,
             intrinsic=FaultConfig(
                 removal_layers=[2],
@@ -413,6 +416,7 @@ class L21GlidingSystem(GlidingSystem):
         )
         self._planes['011'] = GlidingPlaneConfig(
             transformation_matrix=[[0, 1, -1], [-1, 1, 1], [1, 0, 0]],
+            target_unit_vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             n_layers=2,
             intrinsic=FaultConfig(
                 removal_layers=[2],
@@ -434,7 +438,7 @@ class L21GlidingSystem(GlidingSystem):
                     )
                     },
                 # interface=(2, ),
-                nsteps = 6
+                nsteps = 12
             )
         )
         self._planes['111'] = GlidingPlaneConfig(

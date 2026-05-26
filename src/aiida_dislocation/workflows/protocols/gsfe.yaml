@@ -21,6 +21,9 @@ default_inputs:
       metadata:
         options:
             withmpi: True
+      parameters:
+        electrons:
+          conv_thr: 1.0e-6
 
 default_protocol: moderate
 protocols:
