@@ -428,13 +428,13 @@ class L21GlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (2, [1, 0, 0]),
+                        (2, [1/2, 0, 0]),
                     ),
                     '010': (
-                        (2, [0, 1, 0]),
+                        (2, [0, 1/2, 0]),
                     ),
                     '210': (
-                        (2, [2, 1, 0]),
+                        (2, [1, 1/2, 0]),
                     )
                     },
                 # interface=(2, ),
