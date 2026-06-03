@@ -60,7 +60,11 @@ class GlidingSystem(ABC):
 
 # Concrete implementations
 class A1GlidingSystem(GlidingSystem):
-    """A1 (FCC) gliding system."""
+    """A1 (Al) gliding system.
+    Face-centered cubic cell.
+    Atom positions:
+        Al: (0, 0, 0)
+    """
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
@@ -128,7 +132,11 @@ class A1GlidingSystem(GlidingSystem):
         )
 
 class A2GlidingSystem(GlidingSystem):
-    """A2 (BCC) gliding system."""
+    """A2 (Li) gliding system.
+    Body-centered cubic cell.
+    Atom positions:
+        Li: (0, 0, 0)
+    """
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
@@ -199,8 +207,22 @@ class A2GlidingSystem(GlidingSystem):
             )
         )
 
+class A3GlidingSystem(GlidingSystem):
+    """A3 (Mg) gliding system.
+    Hexagonal cell.
+    Atom positions:
+        Mg: (0, 0, 0)
+            (1/3, -1/3, 1/2)
+    """
+    pass
+    
 class B1GlidingSystem(GlidingSystem):
-    """B1 (NaCl) gliding system."""
+    """B1 (NaCl) gliding system.
+    Face-centered cubic cell.
+    Atom positions:
+        Na: (0, 0, 0)
+        Cl: (1/2, 1/2, 1/2)
+    """
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
@@ -257,7 +279,12 @@ class B1GlidingSystem(GlidingSystem):
         )
 
 class B2GlidingSystem(GlidingSystem):
-    """B2 (CsCl) gliding system."""
+    """B2 (CsCl) gliding system.
+    Body-centered cubic cell.
+    Atom positions:
+        Cs: (0, 0, 0)
+        Cl: (1/2, 1/2, 1/2)
+    """
     
     def _register_planes(self):
         self._planes['100'] = GlidingPlaneConfig(
@@ -314,6 +341,32 @@ class B2GlidingSystem(GlidingSystem):
                 nsteps = 10
             )
         )
+
+class B81GlidingSystem(GlidingSystem):
+    """B81 (NiAs) gliding system.
+    Hexagonal cell.
+    Atom positions:
+        Ni: (0, 0, 0)
+            (0, 0, 1/2)
+        As: (1/3, 2/3, 1/4)
+            (2/3, 1/3, 3/4)
+    """
+    pass
+    
+class C9GlidingSystem(GlidingSystem):
+    """C9 (β-Cristobalite) gliding system.
+    Face-centered cell
+    Atoms positions: 
+        Si: (1/8, 1/8, 1/8), 
+            (-1/8, -1/8, -1/8)
+        O : (0, 0, 0), 
+            (0, 1/4, 1/4), 
+            (1/4, 0, 1/4), 
+            (1/4, 1/4, 0)
+    """
+    
+    def _register_planes(self):
+        pass
 
 class C1bGlidingSystem(GlidingSystem):
     """C1b (Half-Heusler) gliding system."""
@@ -388,6 +441,19 @@ class C1bGlidingSystem(GlidingSystem):
                 nsteps = 10
             )
         )
+
+class L12GlidingSystem(GlidingSystem):
+    """L12 (AuCu3) gliding system.
+    Primitive cubic cell.
+    Atom positions:
+        Au: (0, 0, 0)
+        Cu: (1/2, 1/2, 0)
+            (1/2, 0, 1/2)
+            (0, 1/2, 1/2)
+    """
+    
+    def _register_planes(self):
+        pass
 
 class L21GlidingSystem(GlidingSystem):
     """L21 (Heusler) gliding system."""
@@ -484,11 +550,15 @@ class E21GlidingSystem(GlidingSystem):
 _GLIDING_SYSTEM_REGISTRY: dict[str, type[GlidingSystem]] = {
     'A1': A1GlidingSystem,
     'A2': A2GlidingSystem,
+    'A3': A3GlidingSystem,
     'B1': B1GlidingSystem,
     'B2': B2GlidingSystem,
+    'B81': B81GlidingSystem,
+    'C9': C9GlidingSystem,
     'C1_b': C1bGlidingSystem,
-    'L2_1': L21GlidingSystem,
-    'E_21': E21GlidingSystem,
+    'L12': L12GlidingSystem,
+    'L21': L21GlidingSystem,
+    'E21': E21GlidingSystem,
 }
 
 # Cache for instantiated systems

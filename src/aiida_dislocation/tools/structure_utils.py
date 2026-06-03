@@ -132,15 +132,18 @@ def get_strukturbericht(
     PROTOTYPES = {
         "A1": read_structure_from_file('Al').get_pymatgen(),          # Copper (Cu)
         'A2': read_structure_from_file('V').get_pymatgen(),      # Vandadium (V)
+        'A3': read_structure_from_file('Mg').get_pymatgen(),      # Magnesium (Mg)
         "B1": read_structure_from_file('AsTe').get_pymatgen(),   # Arsenic Telluride (AsTe)
-        "B2": read_structure_from_file('NiTi').get_pymatgen(),   # Arsenic Telluride (AsTe)
-        "B_h": read_structure_from_file('MoN').get_pymatgen(),   # Arsenic Telluride (AsTe)
+        "B2": read_structure_from_file('CsCl').get_pymatgen(),   # Cesium Chloride (CsCl)
+        "B81": read_structure_from_file('NiAs').get_pymatgen(),   # Nickel Arsenide (NiAs)
         "A15": read_structure_from_file('Nb3Sn').get_pymatgen(),        # Nb3Sn (Nb3Sn)
-        "C1_b": read_structure_from_file('NbCoSb').get_pymatgen(),            # Gold-Copper (AuCu3)
-        "L2_1": read_structure_from_file('HfAlPd2').get_pymatgen(),            # Gold-Copper (AuCu3)
-        "C_7": read_structure_from_file('TaSe2').get_pymatgen(),            # Gold-Copper (AuCu3)
-        "C_32": read_structure_from_file('MgB2').get_pymatgen(),            # Gold-Copper (AuCu3)
-        "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "C7": read_structure_from_file('TaSe2').get_pymatgen(),            # TMDs
+        "C32": read_structure_from_file('MgB2').get_pymatgen(),            # MgB2
+        "C9": read_structure_from_file('SiO2').get_pymatgen(),   # Silicon dioxide (SiO2)
+        "C1_b": read_structure_from_file('NbCoSb').get_pymatgen(),            # Half-Heusler
+        "L1_2": read_structure_from_file('AuCu3').get_pymatgen(),            # Gold-Copper (AuCu3)
+        "L2_1": read_structure_from_file('HfAlPd2').get_pymatgen(),            # Heusler
+        "E_21": read_structure_from_file('TaRu3C').get_pymatgen(),            # Double Perovskite
     }
     struct_to_check = AseAtomsAdaptor.get_structure(atoms_to_check)
 
