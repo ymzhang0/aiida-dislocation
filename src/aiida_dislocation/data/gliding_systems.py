@@ -556,9 +556,9 @@ _GLIDING_SYSTEM_REGISTRY: dict[str, type[GlidingSystem]] = {
     'B81': B81GlidingSystem,
     'C9': C9GlidingSystem,
     'C1_b': C1bGlidingSystem,
-    'L12': L12GlidingSystem,
-    'L21': L21GlidingSystem,
-    'E21': E21GlidingSystem,
+    'L1_2': L12GlidingSystem,
+    'L2_1': L21GlidingSystem,
+    'E2_1': E21GlidingSystem,
 }
 
 # Cache for instantiated systems
