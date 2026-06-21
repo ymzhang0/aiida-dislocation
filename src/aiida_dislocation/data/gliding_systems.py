@@ -386,7 +386,7 @@ class C1bGlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '110': (
-                        (4, [1, 1, 0]),
+                        (4, [1/2, 1/2, 0]),
                     )
                     },
                 # interface=(4, 4),
@@ -407,13 +407,13 @@ class C1bGlidingSystem(GlidingSystem):
                 possible=True,
                 burger_vectors={
                     '100': (
-                        (2, [1, 0, 0]),
+                        (2, [1/2, 0, 0]),
                     ),
                     '010': (
-                        (2, [0, 1, 0]),
+                        (2, [0, 1/2, 0]),
                     ),
                     '210': (
-                        (2, [2, 1, 0]),
+                        (2, [1, 1/2, 0]),
                     )
                     },
                 # interface=(2, 2),
